@@ -44,7 +44,7 @@ subprojects {
             publications.withType<MavenPublication>().configureEach {
                 pom {
                     name = project.name
-                    description = "Tava 1.0 modular database toolkit"
+                    description = "Tava modular database toolkit"
                     url = "https://github.com/ArikSquad/tava"
                     licenses {
                         license {
