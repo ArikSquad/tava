@@ -5,6 +5,15 @@ public final class PostgresDialect extends BaseDialect {
 		super("jdbc:postgresql://" + host + ":" + port + '/' + database, user, password);
 	}
 
+	public PostgresDialect(String url, String user, String password) {
+		super(url, user, password);
+	}
+
+	@Override
+	public String typeBinary() {
+		return "BYTEA";
+	}
+
 	@Override
 	public String name() {
 		return "postgres";

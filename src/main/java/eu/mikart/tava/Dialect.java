@@ -23,6 +23,8 @@ public interface Dialect {
 
 	String typeJson();
 
+	String typeBinary();
+
 	String autoIncrement();
 
 	boolean supportsIfNotExists();

@@ -7,6 +7,10 @@ public final class SqliteDialect extends BaseDialect {
 		super("jdbc:sqlite:" + file.toAbsolutePath(), null, null);
 	}
 
+	public SqliteDialect(String url) {
+		super(url, null, null);
+	}
+
 	@Override
 	public String name() {
 		return "sqlite";
@@ -54,7 +58,7 @@ public final class SqliteDialect extends BaseDialect {
 
 	@Override
 	public String autoIncrement() {
-		return "AUTOINCREMENT";
+		return "";
 	}
 
 	@Override

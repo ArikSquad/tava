@@ -9,9 +9,9 @@ import eu.mikart.tava.query.UpdateBuilder;
 
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.Objects;
 
 public final class Database {
 	private final Dialect dialect;
@@ -24,6 +24,10 @@ public final class Database {
 
 	public static Builder builder() {
 		return new Builder();
+	}
+
+	public static Database connect(Dialect dialect) {
+		return builder().dialect(dialect).build();
 	}
 
 	public Dialect dialect() {
@@ -49,9 +53,19 @@ public final class Database {
 	public void createTable(String name, Consumer<TableBuilder> consumer) throws SQLException {
 		TableBuilder tb = new TableBuilder(dialect, name);
 		consumer.accept(tb);
-		String sql = dialect.buildCreateTableSql(name, new ArrayList<>(tb.columns()));
+		createTable(name, tb.columns());
+	}
+
+	public void createTable(String name, Class<? extends Record> recordType) throws SQLException {
+		createTable(name, RecordSchema.columns(dialect, recordType));
+	}
+
+	private void createTable(String name, List<ColumnDefinition> columns) throws SQLException {
+		String sql = dialect.buildCreateTableSql(name, columns);
 		try (Connection c = connection()) {
-			c.createStatement().execute(sql);
+			try (var statement = c.createStatement()) {
+				statement.execute(sql);
+			}
 		}
 	}
 
@@ -99,6 +113,7 @@ public final class Database {
 		}
 
 		public Database build() {
+			Objects.requireNonNull(dialect, "dialect");
 			return new Database(dialect, migrationManager);
 		}
 	}

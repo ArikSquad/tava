@@ -47,8 +47,8 @@ public class DatabaseFeatureTest {
 	@Test
 	void createTableDslAndInsertSelectUpdateDelete() throws SQLException {
 		db.createTable("direct_table", t -> {
-			t.uuid("id").primary().end();
-			t.string("name", 100).nullAllowed(false).end();
+			t.uuid("id").primary();
+			t.string("name", 100).nullAllowed(false);
 		});
 		UUID id = UUID.randomUUID();
 		int inserted = db.insert("direct_table", ib -> {
@@ -58,11 +58,11 @@ public class DatabaseFeatureTest {
 		Assertions.assertEquals(1, inserted);
 		List<Direct> result = db.select("direct_table", Direct.class, sb -> sb.eq("name", "Alice"));
 		Assertions.assertEquals(1, result.size());
-		Assertions.assertEquals("Alice", result.get(0).name());
+		Assertions.assertEquals("Alice", result.getFirst().name());
 		int updated = db.update("direct_table", ub -> ub.set("name", "Bob").eq("id", id.toString()));
 		Assertions.assertEquals(1, updated);
 		List<Direct> afterUpdate = db.select("direct_table", Direct.class, sb -> sb.eq("id", id.toString()));
-		Assertions.assertEquals("Bob", afterUpdate.get(0).name());
+		Assertions.assertEquals("Bob", afterUpdate.getFirst().name());
 		int deleted = db.delete("direct_table", dbld -> dbld.eq("id", id.toString()));
 		Assertions.assertEquals(1, deleted);
 		List<Direct> afterDelete = db.select("direct_table", Direct.class, sb -> sb.eq("id", id.toString()));
@@ -72,9 +72,9 @@ public class DatabaseFeatureTest {
 	@Test
 	void chatMessageDefaultNowAndOrdering() throws SQLException, InterruptedException {
 		db.createTable("message", t -> {
-			t.uuid("unique_id").primary().end();
-			t.string("content", 100).nullAllowed(false).end();
-			t.instant("created_at").defaultNow().nullAllowed(false).end();
+			t.uuid("unique_id").primary();
+			t.string("content", 100).nullAllowed(false);
+			t.instant("created_at").defaultNow().nullAllowed(false);
 		});
 		UUID id1 = UUID.randomUUID();
 		UUID id2 = UUID.randomUUID();
@@ -112,8 +112,8 @@ public class DatabaseFeatureTest {
 	@Test
 	void notNullConstraintViolation() throws SQLException {
 		db.createTable("nn_table", t -> {
-			t.uuid("id").primary().end();
-			t.string("name").nullAllowed(false).end();
+			t.uuid("id").primary();
+			t.string("name").nullAllowed(false);
 		});
 		UUID id = UUID.randomUUID();
 		Assertions.assertThrows(SQLException.class, () -> db.insert("nn_table", ib -> {

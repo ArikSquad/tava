@@ -21,7 +21,15 @@ public abstract class BaseDialect implements Dialect {
 	}
 
 	@Override
+	public String typeBinary() {
+		return "BLOB";
+	}
+
+	@Override
 	public String quoteIdentifier(String id) {
+		if (id == null || !id.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+			throw new IllegalArgumentException("Invalid SQL identifier: " + id);
+		}
 		return '"' + id + '"';
 	}
 
@@ -41,18 +49,18 @@ public abstract class BaseDialect implements Dialect {
 	@Override
 	public String buildCreateTableSql(String tableName, List<ColumnDefinition> columns) {
 		StringJoiner defs = new StringJoiner(", ");
-		StringJoiner pk = new StringJoiner(", ");
+		List<String> primaryKeys = new java.util.ArrayList<>();
 		for (ColumnDefinition c : columns) {
 			StringBuilder b = new StringBuilder();
 			b.append(quoteIdentifier(c.name())).append(' ').append(c.type());
-			if (c.autoIncrement()) b.append(' ').append(autoIncrement());
+			if (c.autoIncrement() && !autoIncrement().isBlank()) b.append(' ').append(autoIncrement());
 			if (!c.nullable()) b.append(" NOT NULL");
 			if (c.unique()) b.append(" UNIQUE");
 			for (String extra : c.extras()) b.append(' ').append(extra);
 			defs.add(b.toString());
-			if (c.primary()) pk.add(c.name());
+			if (c.primary()) primaryKeys.add(c.name());
 		}
-		if (pk.length() > 0) defs.add(primaryKeyClause(List.of(pk.toString().split(", "))));
+		if (!primaryKeys.isEmpty()) defs.add(primaryKeyClause(primaryKeys));
 		return "CREATE TABLE " + (supportsIfNotExists() ? "IF NOT EXISTS " : "") + quoteIdentifier(tableName) + " (" + defs + ")";
 	}
 

@@ -11,9 +11,9 @@ public final class CreateChatMessages extends Migration {
 	@Override
 	public void up(SchemaBuilder schema) {
 		schema.createTable("chat_message", table -> {
-			table.uuid("unique_id").primary().end();
-			table.string("content").nullAllowed(false).end();
-			table.instant("created_at").defaultNow().nullAllowed(false).end();
+			table.uuid("unique_id").primary();
+			table.string("content").nullAllowed(false);
+			table.instant("created_at").defaultNow().nullAllowed(false);
 		});
 	}
 }

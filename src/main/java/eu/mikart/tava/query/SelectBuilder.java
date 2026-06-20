@@ -9,6 +9,10 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.UUID;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -74,30 +78,7 @@ public final class SelectBuilder {
                 String name = components[i].getName();
                 Object raw = rs.getObject(name);
                 Class<?> targetType = components[i].getType();
-                if (raw != null && targetType == java.time.Instant.class) {
-                    if (raw instanceof java.sql.Timestamp ts) {
-                        values[i] = ts.toInstant();
-                    } else if (raw instanceof String s) {
-                        java.time.Instant inst = null;
-                        try {
-                            inst = java.time.Instant.parse(s);
-                        } catch (Exception ignored) {
-                            try {
-                                java.time.LocalDateTime ldt = java.time.LocalDateTime.parse(s, java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-                                inst = ldt.toInstant(java.time.ZoneOffset.UTC);
-                            } catch (Exception ignored2) {
-                                try { inst = java.time.Instant.ofEpochMilli(Long.parseLong(s)); } catch (NumberFormatException ignored3) { inst = java.time.Instant.now(); }
-                            }
-                        }
-                        values[i] = inst;
-                    } else if (raw instanceof Long l) {
-                        values[i] = java.time.Instant.ofEpochMilli(l);
-                    } else {
-                        values[i] = java.time.Instant.now();
-                    }
-                } else {
-                    values[i] = raw;
-                }
+                values[i] = convert(raw, targetType, name);
             }
             try {
                 Constructor<?> ctor = recordType.getDeclaredConstructor(
@@ -111,4 +92,38 @@ public final class SelectBuilder {
         }
         return out;
     }
+
+	private Object convert(Object raw, Class<?> targetType, String column) throws SQLException {
+		if (raw == null) return null;
+		if (targetType.isInstance(raw)) return raw;
+		try {
+			if (targetType == Instant.class) {
+				return switch (raw) {
+					case java.sql.Timestamp timestamp -> timestamp.toInstant();
+					case OffsetDateTime value -> value.toInstant();
+					case java.time.LocalDateTime value -> value.toInstant(ZoneOffset.UTC);
+					case Number value -> Instant.ofEpochMilli(value.longValue());
+					default -> {
+						String value = raw.toString();
+						try {
+							yield Instant.parse(value);
+						} catch (java.time.format.DateTimeParseException ignored) {
+							yield java.time.LocalDateTime.parse(
+									value.replace(' ', 'T'),
+									java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME
+							).toInstant(ZoneOffset.UTC);
+						}
+					}
+				};
+			}
+			if (targetType == UUID.class) return UUID.fromString(raw.toString());
+			if (targetType == String.class) return raw.toString();
+			if ((targetType == int.class || targetType == Integer.class) && raw instanceof Number n) return n.intValue();
+			if ((targetType == long.class || targetType == Long.class) && raw instanceof Number n) return n.longValue();
+			if ((targetType == boolean.class || targetType == Boolean.class) && raw instanceof Number n) return n.intValue() != 0;
+			return raw;
+		} catch (RuntimeException exception) {
+			throw new SQLException("Cannot map column '" + column + "' to " + targetType.getSimpleName(), exception);
+		}
+	}
 }

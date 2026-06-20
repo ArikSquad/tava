@@ -3,6 +3,7 @@ package eu.mikart.tava.schema;
 import eu.mikart.tava.ColumnDefinition;
 import eu.mikart.tava.Dialect;
 import eu.mikart.tava.TableBuilder;
+import eu.mikart.tava.RecordSchema;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -27,16 +28,18 @@ public final class SchemaBuilder {
 		sqlStatements.add(dialect.buildCreateTableSql(name, new ArrayList<>(tb.columns())));
 	}
 
+	public void createTable(String name, Class<? extends Record> recordType) {
+		sqlStatements.add(dialect.buildCreateTableSql(name, RecordSchema.columns(dialect, recordType)));
+	}
+
 	public void dropTable(String name) {
 		sqlStatements.add(dialect.buildDropTableSql(name));
 	}
 
 	public void addColumn(String table, Consumer<TableBuilder.ColumnBuilder> consumer, String columnName, String type) {
-		TableBuilder temp = new TableBuilder(dialect, table);
-		TableBuilder.ColumnBuilder cb = new TableBuilder.ColumnBuilder(temp, columnName, type);
+		TableBuilder.ColumnBuilder cb = new TableBuilder.ColumnBuilder(new TableBuilder(dialect, table), columnName, type);
 		consumer.accept(cb);
-		cb.end();
-		ColumnDefinition def = temp.columns().iterator().next();
+		ColumnDefinition def = cb.definition();
 		sqlStatements.add(dialect.buildAlterTableAddColumn(table, def));
 	}
 

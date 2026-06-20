@@ -5,6 +5,23 @@ public final class MySqlDialect extends BaseDialect {
 		super("jdbc:mysql://" + host + ":" + port + '/' + database + "?useSSL=false&allowPublicKeyRetrieval=true", user, password);
 	}
 
+	public MySqlDialect(String url, String user, String password) {
+		super(url, user, password);
+	}
+
+	@Override
+	public String quoteIdentifier(String id) {
+		if (id == null || !id.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+			throw new IllegalArgumentException("Invalid SQL identifier: " + id);
+		}
+		return '`' + id + '`';
+	}
+
+	@Override
+	public String typeBinary() {
+		return "LONGBLOB";
+	}
+
 	@Override
 	public String name() {
 		return "mysql";

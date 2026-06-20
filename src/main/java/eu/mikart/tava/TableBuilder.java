@@ -1,13 +1,14 @@
 package eu.mikart.tava;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
-import java.util.function.Consumer;
 
 public final class TableBuilder {
 	private final Dialect dialect;
 	private final String tableName;
-	private final Set<ColumnDefinition> columns = new LinkedHashSet<>();
+	private final List<ColumnBuilder> columns = new ArrayList<>();
 
 	public TableBuilder(Dialect dialect, String tableName) {
 		this.dialect = dialect;
@@ -15,51 +16,61 @@ public final class TableBuilder {
 	}
 
 	public ColumnBuilder uuid(String name) {
-		return new ColumnBuilder(this, name, dialect.typeUuid());
+		return column(name, dialect.typeUuid());
 	}
 
 	public ColumnBuilder string(String name) {
-		return new ColumnBuilder(this, name, dialect.typeString(0));
+		return column(name, dialect.typeString(0));
 	}
 
 	public ColumnBuilder string(String name, int length) {
-		return new ColumnBuilder(this, name, dialect.typeString(length));
+		return column(name, dialect.typeString(length));
 	}
 
 	public ColumnBuilder text(String name) {
-		return new ColumnBuilder(this, name, dialect.typeText());
+		return column(name, dialect.typeText());
 	}
 
 	public ColumnBuilder integer(String name) {
-		return new ColumnBuilder(this, name, dialect.typeInt());
+		return column(name, dialect.typeInt());
 	}
 
 	public ColumnBuilder bigInt(String name) {
-		return new ColumnBuilder(this, name, dialect.typeBigInt());
+		return column(name, dialect.typeBigInt());
 	}
 
 	public ColumnBuilder bool(String name) {
-		return new ColumnBuilder(this, name, dialect.typeBoolean());
+		return column(name, dialect.typeBoolean());
 	}
 
 	public ColumnBuilder json(String name) {
-		return new ColumnBuilder(this, name, dialect.typeJson());
+		return column(name, dialect.typeJson());
 	}
 
 	public ColumnBuilder timestamp(String name) {
-		return new ColumnBuilder(this, name, dialect.typeTimestamp());
+		return column(name, dialect.typeTimestamp());
 	}
 
 	public ColumnBuilder instant(String name) {
 		return timestamp(name);
 	}
 
-	void add(ColumnDefinition def) {
-		columns.add(def);
+	public ColumnBuilder decimal(String name, int precision, int scale) {
+		return column(name, "DECIMAL(" + precision + ", " + scale + ")");
 	}
 
-	public Set<ColumnDefinition> columns() {
-		return columns;
+	public ColumnBuilder binary(String name) {
+		return column(name, dialect.typeBinary());
+	}
+
+	private ColumnBuilder column(String name, String type) {
+		var column = new ColumnBuilder(this, name, type);
+		columns.add(column);
+		return column;
+	}
+
+	public List<ColumnDefinition> columns() {
+		return columns.stream().map(ColumnBuilder::definition).toList();
 	}
 
 	String tableName() {
@@ -68,10 +79,6 @@ public final class TableBuilder {
 
 	Dialect dialect() {
 		return dialect;
-	}
-
-	public void build(Consumer<TableBuilder> consumer) {
-		consumer.accept(this);
 	}
 
 	public static final class ColumnBuilder {
@@ -90,9 +97,15 @@ public final class TableBuilder {
 			this.type = type;
 		}
 
-		public ColumnBuilder nullValue() {
+		public ColumnBuilder nullable() {
 			this.nullable = true;
 			return this;
+		}
+
+		/** @deprecated use {@link #nullable()} */
+		@Deprecated(forRemoval = false)
+		public ColumnBuilder nullValue() {
+			return nullable();
 		}
 
 		public ColumnBuilder notNull() {
@@ -130,13 +143,13 @@ public final class TableBuilder {
 			return this;
 		}
 
+		@Deprecated(forRemoval = true)
 		public TableBuilder end() {
-			table.add(new ColumnDefinition(name, type, nullable, primary, autoIncrement, unique, extras));
 			return table;
 		}
 
-		public Set<String> extras() {
-			return extras;
+		public ColumnDefinition definition() {
+			return new ColumnDefinition(name, type, nullable, primary, autoIncrement, unique, extras);
 		}
 	}
 }
