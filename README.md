@@ -33,19 +33,14 @@ record Account(
 
 Schema schema = Schema.builder().record(Account.class).build();
 
-try(
-Tava tava = Tava.open(Postgres.connect(jdbcUrl, user, password))){
-SchemaPlan plan = tava.plan(schema);
-    plan.
+try(Tava tava = Tava.open(Postgres.connect(jdbcUrl, user, password))) {
+    SchemaPlan plan = tava.plan(schema);
+    plan.apply(); // destructive and lossy changes require explicit options
 
-apply(); // destructive and lossy changes require explicit options
+    var accounts = tava.entity(Account.class);
+    accounts.insert(new Account(UUID.randomUUID(), "ada@example.com",7,null));
 
-var accounts = tava.entity(Account.class);
-    accounts.
-
-insert(new Account(UUID.randomUUID(), "ada@example.com",7,null));
-
-Page<Account> page = accounts.find(Query.builder()
+    Page<Account> page = accounts.find(Query.builder()
         .where(Predicate.eq("email", "ada@example.com"))
         .sort(Sort.desc("createdAt"))
         .limit(50)
@@ -90,14 +85,10 @@ through typed native access:
 ```java
 MongoDatabase mongo = tava.nativeHandle(MongoDatabase.class);
 
-tava.
-
-nativeAccess().
-
-withNative(Connection .class, connection ->{
+tava.nativeAccess().withNative(Connection.class, connection -> {
         // The JDBC connection is closed after the callback.
         return null;
-        });
+});
 ```
 
 The public API consistently uses entities, fields, and records. SQL-specific table/column
