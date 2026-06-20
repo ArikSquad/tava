@@ -9,7 +9,7 @@ slf4j = "2.0.17"
 aws = "2.31.54"
 mariadb = "3.5.3"
 mssql = "13.4.0.jre11"
-oracle = "23.7.0.25.01"
+oracle = "23.26.2.0.0"
 
 [libraries]
 mongodb-driver-sync = { module = "org.mongodb:mongodb-driver-sync", version.ref = "mongodb" }
