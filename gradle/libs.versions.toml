@@ -8,7 +8,7 @@ sqlite = "3.53.0.0"
 slf4j = "2.0.17"
 aws = "2.31.54"
 mariadb = "3.5.3"
-mssql = "12.10.0.jre11"
+mssql = "13.4.0.jre11"
 oracle = "23.7.0.25.01"
 
 [libraries]
