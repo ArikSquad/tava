@@ -1,0 +1,118 @@
+---
+title: Schema Plans and Migrations
+description: Review schema changes before applying them and track production migration history.
+icon: GitBranch
+---
+
+Tava separates planning from application. Adapters produce a `SchemaPlan`, the plan
+reports its changes, and `apply(...)` enforces risk rules before touching storage.
+
+## Plan First
+
+```java title="PlanSchema.java"
+SchemaPlan plan = tava.plan(schema);
+
+for (SchemaChange change : plan.changes()) {
+    System.out.printf("%s %s%n", change.risk(), change.description());
+}
+
+plan.apply();
+```
+
+## Risk Levels
+
+| Risk | Default behavior |
+| --- | --- |
+| `SAFE` | Applies with `plan.apply()` |
+| `LOSSY` | Requires `new ApplyOptions(true, false)` |
+| `DESTRUCTIVE` | Requires `new ApplyOptions(false, true)` or both flags |
+| `UNSUPPORTED` | Never applies |
+
+```java title="ApplyOptions.java"
+import eu.mikart.tava.schema.plan.ApplyOptions;
+
+plan.apply(ApplyOptions.safe());
+plan.apply(new ApplyOptions(true, false));  // allow lossy
+plan.apply(new ApplyOptions(true, true));   // allow lossy and destructive
+```
+
+<Callout type="warn" title="Loss is explicit">
+The default path is safe. If a change can discard data or remove storage, the caller
+has to say so in code.
+</Callout>
+
+## One-Off Migrations
+
+For small applications, a migration can simply be a schema.
+
+```java title="SchemaMigration.java"
+import eu.mikart.tava.migration.Migration;
+
+var migration = Migration.up("2026-01-15-create-accounts", schema);
+
+tava.migrations().apply(migration);
+```
+
+Tava records applied migrations in `_tava_migrations` unless you construct
+`Migrations` with a custom metadata entity.
+
+## Multi-Step Migrations
+
+Use the builder when schema changes and data changes need to run together.
+
+```java title="DataMigration.java"
+import eu.mikart.tava.migration.Migration;
+import eu.mikart.tava.query.Mutation;
+import eu.mikart.tava.query.Predicate;
+import eu.mikart.tava.query.Query;
+
+Migration migration = Migration.builder("2026-02-02-normalize-accounts")
+        .upSchema(nextSchema)
+        .up("Backfill missing scores", context -> context.update(
+                "accounts",
+                Predicate.eq("score", null),
+                Mutation.builder().set("score", 0).build()))
+        .up("Visit active accounts", context -> context.forEach(
+                "accounts",
+                Query.builder().where(Predicate.eq("status", "active")).build(),
+                record -> audit(record.get("id"))))
+        .build();
+
+var results = tava.migrations().apply(migration);
+```
+
+Migration steps run in order. Each step records an operation result, and schema steps
+include the `SchemaChange` values produced by the adapter.
+
+## Rollbacks
+
+Rollbacks require a down path.
+
+```java title="Rollback.java"
+Migration migration = Migration.reversible(
+        "2026-03-04-add-account-status",
+        schemaWithStatus,
+        schemaWithoutStatus
+);
+
+tava.migrations().apply(migration);
+tava.migrations().rollback(migration);
+```
+
+If a migration has no down schema or down action, `rollback(...)` rejects it.
+
+## Inspect State
+
+```java title="MigrationState.java"
+List<String> applied = tava.migrations().applied();
+List<Migration> pending = tava.migrations().pending(allMigrations);
+```
+
+<Cards>
+  <Card href="schema" title="Schema">
+    Revisit logical types, generated values, and adapter settings.
+  </Card>
+  <Card href="data-transfer" title="Data transfer">
+    Copy records between adapters after planning the target schema.
+  </Card>
+</Cards>

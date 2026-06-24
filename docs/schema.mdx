@@ -1,0 +1,162 @@
+---
+title: Schema
+description: Describe canonical entities with Java records, annotations, or the fluent builder.
+icon: Boxes
+---
+
+Schemas are made of entities, fields, indexes, and adapter settings. The schema
+describes what the application means. Each adapter decides how that model maps to
+native storage.
+
+## Record Schemas
+
+Use records when the entity has a stable Java type.
+
+```java title="Invoice.java"
+import eu.mikart.tava.schema.annotation.Entity;
+import eu.mikart.tava.schema.annotation.Field;
+import eu.mikart.tava.schema.annotation.Identity;
+import eu.mikart.tava.schema.annotation.Required;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity("invoices")
+public record Invoice(
+        @Identity UUID id,
+        @Required @Field(length = 32) String status,
+        @Required @Field(precision = 12, scale = 2) BigDecimal total,
+        Instant issuedAt
+) {}
+```
+
+```java title="BuildSchema.java"
+Schema schema = Schema.builder()
+        .record(Invoice.class)
+        .build();
+```
+
+### Names
+
+| Source | Result |
+| --- | --- |
+| `@Entity("invoices")` | Entity name is `invoices` |
+| no `@Entity` value | Entity name is the decapitalized record name |
+| `@Field("email_address")` | Field name is `email_address` |
+| no `@Field` value | Field name is the record component name |
+
+### Nullability
+
+Primitive record components are required. Object components are nullable by default
+unless they are marked `@Required` or `@Identity`.
+
+```java title="Nullability.java"
+record Profile(
+        @Identity UUID id,      // required
+        int reputation,         // required
+        @Required String name,  // required
+        String avatarUrl        // nullable
+) {}
+```
+
+## Logical Types
+
+Tava maps Java types to canonical logical types before an adapter maps them to
+native storage.
+
+| Java type | Logical type |
+| --- | --- |
+| `String` with `@Field(length = ...)` | `STRING` |
+| `String` without a length | `TEXT` |
+| `int`, `Integer`, `short`, `Short` | `INT32` |
+| `long`, `Long` | `INT64` |
+| `boolean`, `Boolean` | `BOOLEAN` |
+| `UUID` | `UUID` |
+| `Instant`, `OffsetDateTime` | `INSTANT` |
+| `LocalDate` | `LOCAL_DATE` |
+| `LocalDateTime` | `LOCAL_DATE_TIME` |
+| `byte[]` | `BINARY` |
+| `BigDecimal` with precision and scale | `DECIMAL` |
+| `Map` or `Collection` | `JSON` |
+
+<Callout type="warn" title="BigDecimal needs a shape">
+`BigDecimal` fields must declare `@Field(precision = ..., scale = ...)` so adapters
+can create deterministic native columns.
+</Callout>
+
+## Generated Values
+
+Generated values are declared as part of the canonical schema. `UUID` values are
+filled by Tava when a typed record is written with a null field. Other generated
+values are adapter features, so check the plan and capabilities for the backend you
+run against.
+
+```java title="GeneratedFields.java"
+record Session(
+        @Identity @Generated(GeneratedValue.UUID) UUID id,
+        @Generated(GeneratedValue.NOW) Instant createdAt
+) {}
+```
+
+Supported values are:
+
+| Value | Meaning |
+| --- | --- |
+| `NONE` | The application provides the value |
+| `IDENTITY` | The backend generates an identity value when supported |
+| `UUID` | Tava generates a UUID for null typed-record fields |
+| `NOW` | The backend stores the current timestamp when supported |
+
+## Fluent Builder
+
+Use the fluent builder when the schema is assembled at runtime or comes from a
+configuration file.
+
+```java title="FluentSchema.java"
+import eu.mikart.tava.schema.GeneratedValue;
+import eu.mikart.tava.schema.Schema;
+
+Schema schema = Schema.builder()
+        .entity("accounts", entity -> entity
+                .uuid("id").identity().generated(GeneratedValue.UUID).add()
+                .string("email").length(255).required().unique().add()
+                .integer("score").required().add()
+                .instant("createdAt").generated(GeneratedValue.NOW).add()
+                .index("accounts_email_idx", true, "email"))
+        .build();
+```
+
+## Adapter Settings
+
+Adapter settings keep vendor details close to the field without changing the logical
+model.
+
+```java title="AdapterSettings.java"
+import eu.mikart.tava.postgres.PostgresType;
+import eu.mikart.tava.schema.annotation.AdapterSetting;
+
+record Event(
+        @PostgresType("JSONB")
+        @AdapterSetting(adapter = "oracle", key = "type", value = "CLOB")
+        Map<String, Object> payload
+) {}
+```
+
+Typed annotations are available for common overrides:
+
+| Module | Annotation |
+| --- | --- |
+| `tava-postgres` | `@PostgresType("JSONB")` |
+| `tava-mysql` | `@MySqlType("JSON")` |
+| `tava-sqlite` | `@SqliteType("TEXT")` |
+| `tava-h2` | `@H2Type("JSON")` |
+| `tava-sqlserver` | `@SqlServerType("NVARCHAR(MAX)")` |
+| `tava-oracle` | `@OracleType("CLOB")` |
+| `tava-mongodb` | `@MongoSetting("...")` |
+| `tava-dynamodb` | `@DynamoPartitionKey` |
+
+<Callout type="idea" title="Portable first, native when needed">
+Use logical types for the model everyone shares. Add adapter settings only for the
+places where the backend storage choice matters.
+</Callout>

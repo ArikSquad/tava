@@ -1,0 +1,98 @@
+---
+title: Introduction
+description: A portable Java 21 entity layer for relational, document, and key-value databases.
+icon: Database
+---
+
+Tava is a modular Java 21 database toolkit built around one canonical entity model.
+You describe records once, then run the same shape against PostgreSQL, MySQL, MariaDB,
+SQLite, H2, SQL Server, Oracle, MongoDB, or DynamoDB.
+
+It is intentionally small. Tava does not try to hide every backend feature behind a
+lowest-common-denominator API. The portable layer covers schemas, records, queries,
+schema planning, migrations, and transfers. Backend-specific work stays available
+through typed native handles.
+
+<Callout title="Design rule">
+The logical schema is authoritative. Adapter hints can change how a field is stored,
+but they should not change what the field means in the application model.
+</Callout>
+
+<Cards>
+  <Card href="tava/getting-started" title="Get started">
+    Add the BOM, choose an adapter, open `Tava`, and write your first record.
+  </Card>
+  <Card href="tava/schema" title="Model the schema">
+    Use Java records, annotations, or the fluent builder for dynamic schemas.
+  </Card>
+  <Card href="tava/entities-and-queries" title="Read and write">
+    Insert records, page through results, update by predicate, and delete safely.
+  </Card>
+  <Card href="tava/adapters" title="Choose an adapter">
+    See the supported databases and the connection helpers exposed by each module.
+  </Card>
+</Cards>
+
+## What Tava Gives You
+
+| Area | What you use |
+| --- | --- |
+| Entity model | Java records, `EntityRecord`, `Schema.builder()` |
+| Schema control | `tava.plan(schema)`, `SchemaPlan`, `ApplyOptions` |
+| Data access | `Entity<T>`, `Records`, `Query`, `Predicate`, `Sort` |
+| Migration history | `tava.migrations()`, `Migration`, `_tava_migrations` |
+| Data movement | `DataTransfer.copy(...)`, transforms, progress callbacks |
+| Escape hatch | `nativeHandle(...)`, `nativeAccess().withNative(...)` |
+
+## A Complete Pass
+
+```java title="AccountExample.java"
+import eu.mikart.tava.Tava;
+import eu.mikart.tava.data.Page;
+import eu.mikart.tava.postgres.Postgres;
+import eu.mikart.tava.query.Predicate;
+import eu.mikart.tava.query.Query;
+import eu.mikart.tava.query.Sort;
+import eu.mikart.tava.schema.GeneratedValue;
+import eu.mikart.tava.schema.Schema;
+import eu.mikart.tava.schema.annotation.Entity;
+import eu.mikart.tava.schema.annotation.Field;
+import eu.mikart.tava.schema.annotation.Generated;
+import eu.mikart.tava.schema.annotation.Identity;
+import eu.mikart.tava.schema.annotation.Required;
+import eu.mikart.tava.schema.annotation.Unique;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity("accounts")
+record Account(
+        @Identity UUID id,
+        @Required @Unique @Field(length = 255) String email,
+        int score,
+        @Generated(GeneratedValue.NOW) Instant createdAt
+) {}
+
+Schema schema = Schema.builder()
+        .record(Account.class)
+        .build();
+
+try (Tava tava = Tava.open(Postgres.connect(jdbcUrl, user, password))) {
+    tava.plan(schema).apply();
+
+    var accounts = tava.entity(Account.class);
+    accounts.insert(new Account(UUID.randomUUID(), "ada@example.com", 7, null));
+
+    Page<Account> page = accounts.find(Query.builder()
+            .where(Predicate.eq("email", "ada@example.com"))
+            .sort(Sort.desc("createdAt"))
+            .limit(50)
+            .build());
+}
+```
+
+## Where To Go Next
+
+Read [Getting Started](tava/getting-started) first if you are wiring Tava into an
+application. Jump to [Schema](tava/schema) if you already know which adapter you want,
+or [Adapters](tava/adapters) if the storage target is still open.

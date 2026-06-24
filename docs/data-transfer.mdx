@@ -1,0 +1,107 @@
+---
+title: Data Transfer
+description: Copy data between adapters with schema planning, paging, transforms, and progress callbacks.
+icon: ArrowRightLeft
+---
+
+`DataTransfer.copy(...)` moves records from one `Tava` instance to another using the
+canonical schema. It reads in pages, optionally plans the target schema, and returns
+a report with counts and issues.
+
+## Basic Copy
+
+```java title="CopyData.java"
+import eu.mikart.tava.transfer.DataTransfer;
+import eu.mikart.tava.transfer.TransferOptions;
+import eu.mikart.tava.transfer.TransferReport;
+
+try (
+        Tava source = Tava.open(Postgres.connect(sourceUrl, user, password));
+        Tava target = Tava.open(Mongo.connect(targetUri, "archive"))
+) {
+    TransferReport report = DataTransfer.copy(
+            source,
+            target,
+            schema,
+            TransferOptions.defaults()
+    );
+
+    if (!report.complete()) {
+        report.issues().forEach(System.err::println);
+    }
+}
+```
+
+Default options:
+
+| Option | Default |
+| --- | --- |
+| Batch size | `500` |
+| Apply target schema | `true` |
+| Allow lossy schema changes | `false` |
+| Transform | identity |
+| Progress listener | no-op |
+
+## Configure Options
+
+```java title="TransferOptions.java"
+import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.transfer.TransferOptions;
+
+TransferOptions options = new TransferOptions(
+        1_000,
+        false,
+        true,
+        record -> EntityRecord.builder()
+                .set("id", record.get("id"))
+                .set("email", normalizeEmail(record.get("email", String.class)))
+                .set("createdAt", record.get("createdAt"))
+                .build(),
+        (entity, count) -> logger.info("{}: {}", entity, count)
+);
+```
+
+## Transform Records
+
+The transform runs before a record is inserted into the target.
+
+```java title="RedactTransfer.java"
+TransferOptions options = new TransferOptions(
+        500,
+        false,
+        true,
+        record -> EntityRecord.builder()
+                .set("id", record.get("id"))
+                .set("email", record.get("email"))
+                .set("metadata", Map.of("redacted", true))
+                .build(),
+        TransferOptions.ProgressListener.NONE
+);
+```
+
+This is useful for:
+
+- migrating between versions of an entity
+- redacting fields before copying to lower environments
+- normalizing values while moving from one backend to another
+- seeding tests from a production-like source
+
+## Understand The Report
+
+```java title="TransferReport.java"
+TransferReport report = DataTransfer.copy(source, target, schema, options);
+
+report.transferred().forEach((entity, count) ->
+        System.out.printf("%s copied %,d records%n", entity, count));
+
+report.issues().forEach(issue ->
+        System.err.printf("%s %s%n", issue.severity(), issue.detail()));
+```
+
+If an insert fails, copying stops and the report is returned with `complete() == false`.
+Counts include the records successfully inserted before the failure.
+
+<Callout type="warn" title="Transfers are application work">
+Tava handles paging and target inserts, but it does not replace backup, restore, CDC,
+or online migration tooling. Use it when you want a schema-aware application-level copy.
+</Callout>
