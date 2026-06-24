@@ -4,32 +4,33 @@ import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.capability.Feature;
 import eu.mikart.tava.capability.SupportLevel;
 import eu.mikart.tava.schema.FieldDefinition;
+import org.jetbrains.annotations.NotNull;
 
 public class StandardJdbcProfile implements JdbcProfile {
     private final String name;
     private final char quote;
     private final boolean ifNotExists;
 
-    public StandardJdbcProfile(String name, char quote, boolean ifNotExists) {
+    public StandardJdbcProfile(final @NotNull String name, final char quote, final boolean ifNotExists) {
         this.name = name;
         this.quote = quote;
         this.ifNotExists = ifNotExists;
     }
 
     @Override
-    public String name() {
+    public @NotNull String name() {
         return name;
     }
 
     @Override
-    public String quote(String identifier) {
+    public @NotNull String quote(final @NotNull String identifier) {
         if (identifier == null || !identifier.matches("[A-Za-z_][A-Za-z0-9_]*"))
             throw new IllegalArgumentException("Invalid identifier: " + identifier);
         return quote + identifier + quote;
     }
 
     @Override
-    public String type(FieldDefinition field) {
+    public @NotNull String type(final @NotNull FieldDefinition field) {
         return switch (field.type().logicalType()) {
             case STRING -> "VARCHAR(" + (field.type().length() == null ? 255 : field.type().length()) + ")";
             case TEXT, JSON -> "TEXT";
@@ -46,7 +47,7 @@ public class StandardJdbcProfile implements JdbcProfile {
     }
 
     @Override
-    public String identityClause(FieldDefinition field) {
+    public @NotNull String identityClause(final @NotNull FieldDefinition field) {
         return "";
     }
 
@@ -56,7 +57,7 @@ public class StandardJdbcProfile implements JdbcProfile {
     }
 
     @Override
-    public Capabilities capabilities() {
+    public @NotNull Capabilities capabilities() {
         return Capabilities.builder(name)
                 .supported(Feature.SCHEMA_ENFORCEMENT, Feature.UNIQUE_CONSTRAINTS, Feature.FOREIGN_KEYS,
                         Feature.SECONDARY_INDEXES, Feature.TRANSACTIONS, Feature.CONDITIONAL_WRITES,

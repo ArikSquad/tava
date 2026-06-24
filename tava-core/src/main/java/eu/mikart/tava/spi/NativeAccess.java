@@ -1,11 +1,13 @@
 package eu.mikart.tava.spi;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.util.function.Function;
 
 public interface NativeAccess {
-    <T> T nativeHandle(Class<T> type);
+    <T> @NotNull T nativeHandle(@NotNull Class<T> type);
 
-    default <T, R> R withNative(Class<T> type, Function<T, R> callback) {
+    default <T, R> @NotNull R withNative(final @NotNull Class<T> type, final @NotNull Function<T, R> callback) {
         return callback.apply(nativeHandle(type));
     }
 }

@@ -10,6 +10,7 @@ aws = "2.46.15"
 mariadb = "3.5.3"
 mssql = "13.4.0.jre11"
 oracle = "23.26.2.0.0"
+jetbrains-annotations = "26.0.2"
 
 [libraries]
 mongodb-driver-sync = { module = "org.mongodb:mongodb-driver-sync", version.ref = "mongodb" }
@@ -25,3 +26,4 @@ aws-dynamodb = { module = "software.amazon.awssdk:dynamodb", version.ref = "aws"
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+jetbrains-annotations = { module = "org.jetbrains:annotations", version.ref = "jetbrains-annotations" }
