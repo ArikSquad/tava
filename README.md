@@ -38,7 +38,7 @@ try(Tava tava = Tava.open(Postgres.connect(jdbcUrl, user, password))) {
     plan.apply(); // destructive and lossy changes require explicit options
 
     var accounts = tava.entity(Account.class);
-    accounts.insert(new Account(UUID.randomUUID(), "ada@example.com",7,null));
+    accounts.insert(new Account(UUID.randomUUID(), "ada@example.com", 7, null));
 
     Page<Account> page = accounts.find(Query.builder()
         .where(Predicate.eq("email", "ada@example.com"))

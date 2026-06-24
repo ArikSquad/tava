@@ -1,13 +1,16 @@
 package eu.mikart.tava;
 
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.schema.GeneratedValue;
 import eu.mikart.tava.schema.RecordSchemas;
 import eu.mikart.tava.schema.annotation.Generated;
 import eu.mikart.tava.schema.annotation.Field;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.RecordComponent;
+import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -22,9 +25,8 @@ final class RecordMapper<T extends Record> {
         RecordSchemas.describe(type);
         this.components = type.getRecordComponents();
         try {
-            @SuppressWarnings("unchecked")
-            Constructor<T> found = (Constructor<T>) type.getDeclaredConstructor(
-                    java.util.Arrays.stream(components).map(RecordComponent::getType).toArray(Class<?>[]::new));
+            Constructor<T> found = type.getDeclaredConstructor(
+                Arrays.stream(components).map(RecordComponent::getType).toArray(Class<?>[]::new));
             found.setAccessible(true);
             this.constructor = found;
         } catch (ReflectiveOperationException e) {
@@ -43,7 +45,7 @@ final class RecordMapper<T extends Record> {
                 Object fieldValue = accessor.invoke(value);
                 Generated generated = component.getAnnotation(Generated.class);
                 if (fieldValue == null && generated != null) {
-                    if (generated.value() == eu.mikart.tava.schema.GeneratedValue.UUID) fieldValue = UUID.randomUUID();
+                    if (generated.value() == GeneratedValue.UUID) fieldValue = UUID.randomUUID();
                     else continue;
                 }
                 values.put(name, fieldValue);
@@ -69,16 +71,18 @@ final class RecordMapper<T extends Record> {
     }
 
     private Object convert(Object raw, Class<?> target) {
-        if (raw == null || target.isInstance(raw)) return raw;
-        if (target == String.class) return raw.toString();
-        if (target == UUID.class) return UUID.fromString(raw.toString());
-        if (target == Instant.class) {
-            if (raw instanceof java.sql.Timestamp timestamp) return timestamp.toInstant();
-            return Instant.parse(raw.toString());
-        }
-        if ((target == int.class || target == Integer.class) && raw instanceof Number n) return n.intValue();
-        if ((target == long.class || target == Long.class) && raw instanceof Number n) return n.longValue();
-        if ((target == boolean.class || target == Boolean.class) && raw instanceof Number n) return n.intValue() != 0;
-        return raw;
+        return switch (raw) {
+            case null -> null;
+            case Object o when target.isInstance(o) -> o;
+            case Object o when target == String.class -> o.toString();
+            case Object o when target == UUID.class -> UUID.fromString(o.toString());
+            case Timestamp timestamp when target == Instant.class -> timestamp.toInstant();
+            case Object o when target == Instant.class -> Instant.parse(o.toString());
+            case Number n when target == int.class || target == Integer.class -> n.intValue();
+            case Number n when target == long.class || target == Long.class -> n.longValue();
+            case Number n when target == boolean.class || target == Boolean.class -> n.intValue() != 0;
+            case Number n when target == byte.class || target == Byte.class -> n.byteValue();
+            default -> raw;
+        };
     }
 }
