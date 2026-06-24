@@ -1,8 +1,10 @@
 package eu.mikart.tava.schema.plan;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.util.List;
 
-public record SchemaPlan(List<SchemaChange> changes, Runnable application) {
+public record SchemaPlan(@NotNull List<SchemaChange> changes, @NotNull Runnable application) {
     public SchemaPlan {
         changes = List.copyOf(changes);
     }
@@ -11,8 +13,8 @@ public record SchemaPlan(List<SchemaChange> changes, Runnable application) {
         apply(ApplyOptions.safe());
     }
 
-    public void apply(ApplyOptions options) {
-        for (SchemaChange change : changes) {
+    public void apply(final @NotNull ApplyOptions options) {
+        for (final SchemaChange change : changes) {
             if (change.risk() == ChangeRisk.UNSUPPORTED)
                 throw new IllegalStateException("Unsupported schema change: " + change.description());
             if (change.risk() == ChangeRisk.LOSSY && !options.allowLossy())
