@@ -1,6 +1,7 @@
 package eu.mikart.tava.schema;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 public record Schema(List<EntityDefinition> entities) {
     public Schema {
@@ -25,6 +26,13 @@ public record Schema(List<EntityDefinition> entities) {
 
         public Builder entity(EntityDefinition definition) {
             entities.add(definition);
+            return this;
+        }
+
+        public Builder entity(String name, Consumer<EntityBuilder> definition) {
+            EntityBuilder builder = new EntityBuilder(name);
+            definition.accept(builder);
+            entities.add(builder.build());
             return this;
         }
 

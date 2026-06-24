@@ -1,6 +1,7 @@
 package eu.mikart.tava;
 
 import eu.mikart.tava.capability.Capabilities;
+import eu.mikart.tava.migration.Migrations;
 import eu.mikart.tava.schema.RecordSchemas;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.plan.SchemaPlan;
@@ -35,6 +36,10 @@ public final class Tava implements AutoCloseable {
 
     public SchemaPlan plan(Schema desired) {
         return schema().plan(desired);
+    }
+
+    public Migrations migrations() {
+        return new Migrations(this);
     }
 
     public <T extends Record> Entity<T> entity(Class<T> type) {
