@@ -1,13 +1,14 @@
 package eu.mikart.tava.migration;
 
 import eu.mikart.tava.schema.Schema;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
 
-public record Migration(String id, List<MigrationStep> up, List<MigrationStep> down) {
+public record Migration(@NotNull String id, List<MigrationStep> up, List<MigrationStep> down) {
     public Migration {
         if (id == null || id.isBlank()) throw new IllegalArgumentException("migration id is required");
         up = List.copyOf(Objects.requireNonNull(up, "up steps are required"));

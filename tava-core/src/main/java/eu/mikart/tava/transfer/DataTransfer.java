@@ -5,6 +5,7 @@ import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.plan.ApplyOptions;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -12,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 public final class DataTransfer {
-    public static TransferReport copy(Tava source, Tava target, Schema schema, TransferOptions options) {
+    public static @NotNull TransferReport copy(@NotNull final Tava source, @NotNull final Tava target, @NotNull final Schema schema, @NotNull final TransferOptions options) {
         if (options.applySchema()) {
             target.plan(schema).apply(new ApplyOptions(options.allowLossy(), false));
         }

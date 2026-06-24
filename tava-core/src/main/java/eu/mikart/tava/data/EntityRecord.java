@@ -3,12 +3,13 @@ package eu.mikart.tava.data;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 public record EntityRecord(@NotNull Map<String, Object> values) {
     public EntityRecord {
-        values = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(values));
+        values = Collections.unmodifiableMap(new LinkedHashMap<>(values));
     }
 
     public @Nullable Object get(final @NotNull String field) {
