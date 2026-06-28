@@ -17,11 +17,13 @@ import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.util.*;
 import java.util.function.Function;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public final class JdbcAdapter implements Adapter {
     @FunctionalInterface
     public interface Connections {
-        Connection open() throws SQLException;
+        @NotNull Connection open() throws SQLException;
     }
 
     private final JdbcProfile profile;
@@ -30,62 +32,74 @@ public final class JdbcAdapter implements Adapter {
     private final JdbcStore store = new JdbcStore();
     private final JdbcSchemas schemas = new JdbcSchemas();
 
-    public JdbcAdapter(JdbcProfile profile, Connections connections) {
+    public JdbcAdapter(final @NotNull JdbcProfile profile, final @NotNull Connections connections) {
         this(profile, connections, () -> {
         });
     }
 
-    public JdbcAdapter(JdbcProfile profile, Connections connections, Runnable closeAction) {
+    public JdbcAdapter(
+            final @NotNull JdbcProfile profile,
+            final @NotNull Connections connections,
+            final @NotNull Runnable closeAction
+    ) {
         this.profile = Objects.requireNonNull(profile);
         this.connections = Objects.requireNonNull(connections);
         this.closeAction = Objects.requireNonNull(closeAction);
     }
 
-    public static JdbcAdapter driverManager(JdbcProfile profile, String url, String user, String password) {
+    public static @NotNull JdbcAdapter driverManager(
+            final @NotNull JdbcProfile profile,
+            final @NotNull String url,
+            final @Nullable String user,
+            final @Nullable String password
+    ) {
         return new JdbcAdapter(profile, () -> user == null
                 ? DriverManager.getConnection(url) : DriverManager.getConnection(url, user, password));
     }
 
     @Override
-    public String name() {
+    public @NotNull String name() {
         return profile.name();
     }
 
     @Override
-    public Capabilities capabilities() {
+    public @NotNull Capabilities capabilities() {
         return profile.capabilities();
     }
 
     @Override
-    public SchemaManager schemas() {
+    public @NotNull SchemaManager schemas() {
         return schemas;
     }
 
     @Override
-    public EntityStore entities() {
+    public @NotNull EntityStore entities() {
         return store;
     }
 
     @Override
-    public NativeAccess nativeAccess() {
+    public @NotNull NativeAccess nativeAccess() {
         return new NativeAccess() {
             @Override
-            public <T> T nativeHandle(Class<T> type) {
+            public <T> @NotNull T nativeHandle(final @NotNull Class<T> type) {
                 if (type != Connection.class)
                     throw new IllegalArgumentException("JDBC adapter exposes java.sql.Connection");
                 try {
                     return type.cast(connections.open());
-                } catch (SQLException e) {
-                    throw data("Open native connection", e);
+                } catch (SQLException failure) {
+                    throw data("Open native connection", failure);
                 }
             }
 
             @Override
-            public <T, R> R withNative(Class<T> type, Function<T, R> callback) {
-                try (Connection connection = connections.open()) {
+            public <T, R> @NotNull R withNative(
+                    final @NotNull Class<T> type,
+                    final @NotNull Function<T, R> callback
+            ) {
+                try (final Connection connection = connections.open()) {
                     return callback.apply(type.cast(connection));
-                } catch (SQLException e) {
-                    throw data("Use native connection", e);
+                } catch (SQLException failure) {
+                    throw data("Use native connection", failure);
                 }
             }
         };
@@ -98,7 +112,7 @@ public final class JdbcAdapter implements Adapter {
 
     private final class JdbcStore implements EntityStore {
         @Override
-        public EntityRecord insert(String entity, EntityRecord record) {
+        public @NotNull EntityRecord insert(@NotNull String entity, @NotNull EntityRecord record) {
             if (record.values().isEmpty()) throw new IllegalArgumentException("record has no values");
             List<String> fields = new ArrayList<>(record.values().keySet());
             String sql = "INSERT INTO " + profile.quote(entity) + " (" + fields.stream().map(profile::quote)
@@ -114,7 +128,7 @@ public final class JdbcAdapter implements Adapter {
         }
 
         @Override
-        public Page<EntityRecord> find(String entity, Query query) {
+        public @NotNull Page<EntityRecord> find(@NotNull String entity, @NotNull Query query) {
             List<Object> parameters = new ArrayList<>();
             String projection = query.projection().isEmpty() ? "*" : query.projection().stream()
                     .map(profile::quote).collect(java.util.stream.Collectors.joining(", "));
@@ -152,7 +166,7 @@ public final class JdbcAdapter implements Adapter {
         }
 
         @Override
-        public long update(String entity, Predicate predicate, Mutation mutation) {
+        public long update(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
             if (mutation.values().isEmpty()) return 0;
             List<Object> parameters = new ArrayList<>(mutation.values().values());
             StringBuilder sql = new StringBuilder("UPDATE ").append(profile.quote(entity)).append(" SET ");
@@ -168,7 +182,7 @@ public final class JdbcAdapter implements Adapter {
         }
 
         @Override
-        public long delete(String entity, Predicate predicate) {
+        public long delete(@NotNull String entity, @NotNull Predicate predicate) {
             List<Object> parameters = new ArrayList<>();
             StringBuilder sql = new StringBuilder("DELETE FROM ").append(profile.quote(entity));
             appendWhere(sql, parameters, predicate);
@@ -183,7 +197,7 @@ public final class JdbcAdapter implements Adapter {
 
     private final class JdbcSchemas implements SchemaManager {
         @Override
-        public Schema inspect() {
+        public @NotNull Schema inspect() {
             try (Connection c = connections.open()) {
                 DatabaseMetaData meta = c.getMetaData();
                 List<EntityDefinition> entities = new ArrayList<>();
@@ -211,7 +225,7 @@ public final class JdbcAdapter implements Adapter {
         }
 
         @Override
-        public SchemaPlan plan(Schema desired) {
+        public @NotNull SchemaPlan plan(@NotNull Schema desired) {
             validate(desired);
             Schema actual = inspect();
             Map<String, EntityDefinition> existing = new HashMap<>();
@@ -222,6 +236,7 @@ public final class JdbcAdapter implements Adapter {
                 EntityDefinition current = existing.get(entity.name().toLowerCase(Locale.ROOT));
                 if (current == null) {
                     statements.add(createEntity(entity));
+                    // Keep the generated SQL attached so callers can display or audit the plan.
                     changes.add(new SchemaChange("Create entity " + entity.name(), ChangeRisk.SAFE, statements.getLast()));
                     for (IndexDefinition index : entity.indexes()) {
                         statements.add(createIndex(entity.name(), index));
@@ -318,6 +333,14 @@ public final class JdbcAdapter implements Adapter {
     private String predicateSql(Predicate predicate, List<Object> parameters) {
         if (predicate instanceof Predicate.Comparison comparison) {
             String field = profile.quote(comparison.field());
+            if (comparison.value() == null) {
+                return switch (comparison.operator()) {
+                    case EQ -> field + " IS NULL";
+                    case NE -> field + " IS NOT NULL";
+                    default -> throw new TavaException.Capability(
+                            "JDBC predicate " + comparison.operator() + " does not support null values");
+                };
+            }
             if (comparison.operator() == Predicate.Operator.IN) {
                 if (!(comparison.value() instanceof Collection<?> values) || values.isEmpty())
                     throw new IllegalArgumentException("IN requires at least one value");
@@ -353,7 +376,6 @@ public final class JdbcAdapter implements Adapter {
         int index = 1;
         for (Object value : values) {
             if (value instanceof java.time.Instant instant) statement.setTimestamp(index++, Timestamp.from(instant));
-            else if (value instanceof UUID uuid) statement.setObject(index++, uuid.toString());
             else statement.setObject(index++, value);
         }
     }

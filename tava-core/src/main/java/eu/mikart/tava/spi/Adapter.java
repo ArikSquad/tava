@@ -1,17 +1,18 @@
 package eu.mikart.tava.spi;
 
 import eu.mikart.tava.capability.Capabilities;
+import org.jetbrains.annotations.NotNull;
 
 public interface Adapter extends AutoCloseable {
-    String name();
+    @NotNull String name();
 
-    Capabilities capabilities();
+    @NotNull Capabilities capabilities();
 
-    SchemaManager schemas();
+    @NotNull SchemaManager schemas();
 
-    EntityStore entities();
+    @NotNull EntityStore entities();
 
-    NativeAccess nativeAccess();
+    @NotNull NativeAccess nativeAccess();
 
     @Override
     void close();

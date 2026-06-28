@@ -28,6 +28,15 @@ subprojects {
         tasks.withType<Test>().configureEach {
             useJUnitPlatform()
         }
+        dependencies {
+            add("compileOnly", rootProject.libs.jetbrains.annotations)
+            add("testCompileOnly", rootProject.libs.jetbrains.annotations)
+        }
+    }
+    plugins.withId("java-library") {
+        dependencies {
+            add("compileOnlyApi", rootProject.libs.jetbrains.annotations)
+        }
     }
     plugins.withId("maven-publish") {
         extensions.configure<PublishingExtension> {

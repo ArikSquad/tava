@@ -10,13 +10,14 @@ import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.*;
 import eu.mikart.tava.schema.plan.*;
 import eu.mikart.tava.spi.*;
+import org.jetbrains.annotations.NotNull;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.services.dynamodb.waiters.DynamoDbWaiter;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
-import java.time.temporal.TemporalAccessor;
 import java.util.*;
 
 final class DynamoDbAdapter implements Adapter {
@@ -32,12 +33,12 @@ final class DynamoDbAdapter implements Adapter {
     }
 
     @Override
-    public String name() {
+    public @NotNull String name() {
         return "dynamodb";
     }
 
     @Override
-    public Capabilities capabilities() {
+    public @NotNull Capabilities capabilities() {
         return Capabilities.builder(name())
                 .supported(Feature.SECONDARY_INDEXES, Feature.CONDITIONAL_WRITES, Feature.PAGINATION,
                         Feature.PROJECTION, Feature.TTL, Feature.GENERATED_VALUES, Feature.JSON,
@@ -56,20 +57,20 @@ final class DynamoDbAdapter implements Adapter {
     }
 
     @Override
-    public SchemaManager schemas() {
+    public @NotNull SchemaManager schemas() {
         return schemas;
     }
 
     @Override
-    public EntityStore entities() {
+    public @NotNull EntityStore entities() {
         return store;
     }
 
     @Override
-    public NativeAccess nativeAccess() {
+    public @NotNull NativeAccess nativeAccess() {
         return new NativeAccess() {
             @Override
-            public <T> T nativeHandle(Class<T> type) {
+            public @NotNull <T> T nativeHandle(@NotNull Class<T> type) {
                 if (type != DynamoDbClient.class) throw new IllegalArgumentException("Adapter exposes DynamoDbClient");
                 return type.cast(client);
             }
@@ -83,13 +84,13 @@ final class DynamoDbAdapter implements Adapter {
 
     private final class Store implements EntityStore {
         @Override
-        public EntityRecord insert(String entity, EntityRecord record) {
+        public @NotNull EntityRecord insert(@NotNull String entity, @NotNull EntityRecord record) {
             client.putItem(PutItemRequest.builder().tableName(entity).item(encode(record.values())).build());
             return record;
         }
 
         @Override
-        public Page<EntityRecord> find(String entity, Query query) {
+        public @NotNull Page<EntityRecord> find(@NotNull String entity, @NotNull Query query) {
             Expression expression = expression(query.predicate());
             ScanRequest.Builder request = ScanRequest.builder().tableName(entity)
                     .limit(query.limit() == 0 ? 500 : query.limit());
@@ -112,7 +113,8 @@ final class DynamoDbAdapter implements Adapter {
         }
 
         @Override
-        public long update(String entity, Predicate predicate, Mutation mutation) {
+        public long update(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
+            if (mutation.values().isEmpty()) return 0;
             Map<String, AttributeValue> key = key(entity, predicate);
             Map<String, String> names = new HashMap<>();
             Map<String, AttributeValue> values = new HashMap<>();
@@ -131,7 +133,7 @@ final class DynamoDbAdapter implements Adapter {
         }
 
         @Override
-        public long delete(String entity, Predicate predicate) {
+        public long delete(@NotNull String entity, @NotNull Predicate predicate) {
             client.deleteItem(DeleteItemRequest.builder().tableName(entity).key(key(entity, predicate)).build());
             return 1;
         }
@@ -145,7 +147,7 @@ final class DynamoDbAdapter implements Adapter {
 
     private final class Schemas implements SchemaManager {
         @Override
-        public Schema inspect() {
+        public @NotNull Schema inspect() {
             List<EntityDefinition> entities = new ArrayList<>();
             for (String table : client.listTables().tableNames()) {
                 EntityDefinition known = definitions.get(table);
@@ -156,7 +158,7 @@ final class DynamoDbAdapter implements Adapter {
         }
 
         @Override
-        public SchemaPlan plan(Schema desired) {
+        public @NotNull SchemaPlan plan(@NotNull Schema desired) {
             Set<String> current = new HashSet<>(client.listTables().tableNames());
             List<SchemaChange> changes = new ArrayList<>();
             List<Runnable> operations = new ArrayList<>();
@@ -182,6 +184,9 @@ final class DynamoDbAdapter implements Adapter {
                 .keySchema(KeySchemaElement.builder().attributeName(partition.name()).keyType(KeyType.HASH).build())
                 .build();
         client.createTable(request);
+        try (DynamoDbWaiter waiter = client.waiter()) {
+            waiter.waitUntilTableExists(DescribeTableRequest.builder().tableName(entity.name()).build());
+        }
     }
 
     private void validateEntity(EntityDefinition entity) {

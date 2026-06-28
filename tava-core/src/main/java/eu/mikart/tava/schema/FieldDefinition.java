@@ -1,15 +1,17 @@
 package eu.mikart.tava.schema;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.util.Map;
 
 public record FieldDefinition(
-        String name,
-        FieldType type,
+        @NotNull String name,
+        @NotNull FieldType type,
         boolean nullable,
         boolean identity,
         boolean unique,
-        GeneratedValue generated,
-        Map<String, Object> settings
+        @NotNull GeneratedValue generated,
+        @NotNull Map<String, Object> settings
 ) {
     public FieldDefinition {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("field name is required");

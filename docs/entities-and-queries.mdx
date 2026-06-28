@@ -1,0 +1,138 @@
+---
+title: Entities and Queries
+description: Insert, page, update, and delete typed records or raw entity records.
+icon: ListFilter
+---
+
+The entity API has two layers:
+
+| Layer | Use it when |
+| --- | --- |
+| `Entity<T>` | You have a Java record type and want typed reads and writes |
+| `Records` | You need dynamic fields, transfers, migrations, or runtime schemas |
+
+Both layers use the same query, predicate, mutation, and paging types.
+
+## Typed Entities
+
+```java title="TypedEntity.java"
+var accounts = tava.entity(Account.class);
+
+Account saved = accounts.insert(new Account(
+        UUID.randomUUID(),
+        "ada@example.com",
+        7,
+        null
+));
+
+var page = accounts.find(Query.builder()
+        .where(Predicate.eq("email", saved.email()))
+        .limit(1)
+        .build());
+```
+
+`Entity<T>` maps between the record type and `EntityRecord` internally. Insert calls
+return the stored record, which is useful when the backend generates fields.
+
+## Dynamic Records
+
+```java title="DynamicRecords.java"
+import eu.mikart.tava.data.EntityRecord;
+
+var records = tava.records("accounts");
+
+records.insert(EntityRecord.builder()
+        .set("id", UUID.randomUUID())
+        .set("email", "grace@example.com")
+        .set("score", 11)
+        .build());
+```
+
+Use `Records` for migration code, data transfer transforms, admin tools, or schemas
+that are not represented by Java record classes.
+
+## Predicates
+
+Predicates are composable and backend-neutral.
+
+```java title="Predicates.java"
+Predicate activeHighValue = Predicate.and(
+        Predicate.eq("status", "active"),
+        Predicate.gte("score", 100)
+);
+
+Predicate named = Predicate.or(
+        Predicate.startsWith("email", "ops@"),
+        Predicate.contains("tags", "internal")
+);
+```
+
+| Predicate | Purpose |
+| --- | --- |
+| `all()` | Match every record |
+| `eq(field, value)` | Equality |
+| `ne(field, value)` | Inequality |
+| `lt`, `lte`, `gt`, `gte` | Ordered comparisons |
+| `in(field, values)` | Field is one of several values |
+| `contains(field, value)` | Backend-supported containment |
+| `startsWith(field, value)` | Prefix matching |
+| `and(...)`, `or(...)` | Junctions |
+
+## Sorting, Projection, And Limits
+
+```java title="QueryBuilder.java"
+var query = Query.builder()
+        .where(Predicate.eq("status", "active"))
+        .project("id", "email", "createdAt")
+        .sort(Sort.desc("createdAt"))
+        .limit(50)
+        .build();
+```
+
+`project(...)` narrows the returned fields. `sort(...)` accepts one or more
+`Sort.asc(...)` or `Sort.desc(...)` values. `limit(0)` means the adapter default is
+used.
+
+## Cursor Paging
+
+Find calls return a `Page<T>` with the current items and an optional cursor for the
+next page.
+
+```java title="Paging.java"
+String cursor = null;
+
+do {
+    var page = accounts.find(Query.builder()
+            .where(Predicate.eq("status", "active"))
+            .sort(Sort.asc("email"))
+            .limit(500)
+            .cursor(cursor)
+            .build());
+
+    for (Account account : page.items()) {
+        export(account);
+    }
+
+    cursor = page.nextCursor();
+} while (cursor != null);
+```
+
+## Updates And Deletes
+
+Updates use `Mutation`. Deletes use a predicate directly.
+
+```java title="Mutate.java"
+long updated = accounts.update(
+        Predicate.eq("email", "ada@example.com"),
+        Mutation.builder()
+                .set("score", 8)
+                .build()
+);
+
+long deleted = accounts.delete(Predicate.eq("status", "disabled"));
+```
+
+<Callout type="warn" title="Predicate scope matters">
+`update` and `delete` operate on every record matched by the predicate. Build admin
+workflows so broad predicates are deliberate and visible.
+</Callout>

@@ -2,9 +2,10 @@ package eu.mikart.tava.spi;
 
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.plan.SchemaPlan;
+import org.jetbrains.annotations.NotNull;
 
 public interface SchemaManager {
-    Schema inspect();
+    @NotNull Schema inspect();
 
-    SchemaPlan plan(Schema desired);
+    @NotNull SchemaPlan plan(@NotNull Schema desired);
 }
