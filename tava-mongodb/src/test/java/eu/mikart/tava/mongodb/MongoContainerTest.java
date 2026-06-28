@@ -8,9 +8,9 @@ import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.Sort;
 import eu.mikart.tava.schema.Schema;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.MongoDBContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.mongodb.MongoDBContainer;
 
 import java.util.List;
 

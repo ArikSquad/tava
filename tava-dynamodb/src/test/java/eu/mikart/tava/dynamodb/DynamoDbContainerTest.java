@@ -7,9 +7,9 @@ import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.Schema;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -20,19 +20,18 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.testcontainers.containers.localstack.LocalStackContainer.Service.DYNAMODB;
 
 @Testcontainers
 class DynamoDbContainerTest {
     @Container
     static final LocalStackContainer LOCALSTACK =
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:4.4.0"))
-                    .withServices(DYNAMODB);
+                    .withServices("dynamodb");
 
     @Test
     void runsSchemaCrudProjectionAndCursorPaging() {
         try (DynamoDbClient client = DynamoDbClient.builder()
-                .endpointOverride(LOCALSTACK.getEndpointOverride(DYNAMODB))
+                .endpointOverride(LOCALSTACK.getEndpoint())
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
                 .region(Region.of(LOCALSTACK.getRegion()))
                 .build();

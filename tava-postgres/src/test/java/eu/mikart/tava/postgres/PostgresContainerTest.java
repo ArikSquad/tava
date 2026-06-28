@@ -8,9 +8,9 @@ import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.Sort;
 import eu.mikart.tava.schema.Schema;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import java.sql.Connection;
 import java.util.List;
@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @Testcontainers
 class PostgresContainerTest {
     @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine");
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
 
     @Test
     void runsCrudPredicatesPagingAndNativeAccess() {
