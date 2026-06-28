@@ -14,6 +14,7 @@ import org.jetbrains.annotations.NotNull;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.services.dynamodb.waiters.DynamoDbWaiter;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -113,6 +114,7 @@ final class DynamoDbAdapter implements Adapter {
 
         @Override
         public long update(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
+            if (mutation.values().isEmpty()) return 0;
             Map<String, AttributeValue> key = key(entity, predicate);
             Map<String, String> names = new HashMap<>();
             Map<String, AttributeValue> values = new HashMap<>();
@@ -182,6 +184,9 @@ final class DynamoDbAdapter implements Adapter {
                 .keySchema(KeySchemaElement.builder().attributeName(partition.name()).keyType(KeyType.HASH).build())
                 .build();
         client.createTable(request);
+        try (DynamoDbWaiter waiter = client.waiter()) {
+            waiter.waitUntilTableExists(DescribeTableRequest.builder().tableName(entity.name()).build());
+        }
     }
 
     private void validateEntity(EntityDefinition entity) {
