@@ -1,0 +1,15 @@
+{
+  "title": "Tava",
+  "description": "Tava is a modular Java 21 database toolkit.",
+  "root": true,
+  "pages": [
+    "index",
+    "getting-started",
+    "schema",
+    "entities-and-queries",
+    "schema-plans-and-migrations",
+    "adapters",
+    "data-transfer",
+    "native-access-and-capabilities"
+  ]
+}

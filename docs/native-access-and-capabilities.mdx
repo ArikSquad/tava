@@ -1,0 +1,114 @@
+---
+title: Native Access and Capabilities
+description: Inspect backend support and drop to native clients without leaving Tava.
+icon: Wrench
+---
+
+Tava keeps the portable API small and exposes backend-specific work explicitly. If a
+feature cannot be made portable without lying, use capabilities to detect it and
+native access to call the real client.
+
+## Capability Matrix
+
+```java title="Capabilities.java"
+import eu.mikart.tava.capability.Feature;
+
+var capabilities = tava.capabilities();
+
+if (capabilities.supports(Feature.JSON)) {
+    // Portable JSON work is available or emulated.
+}
+
+capabilities.matrix().forEach((feature, capability) ->
+        System.out.printf("%s %s %s%n",
+                feature,
+                capability.level(),
+                capability.detail()));
+```
+
+Support levels:
+
+| Level | Meaning |
+| --- | --- |
+| `SUPPORTED` | The adapter supports the feature directly |
+| `EMULATED` | The adapter provides compatible behavior in the portable layer |
+| `NATIVE_ONLY` | Use native access for this feature |
+| `UNSUPPORTED` | The adapter does not provide the feature |
+
+Features include schema enforcement, unique constraints, secondary indexes,
+transactions, conditional writes, sorting, pagination, projection, joins, aggregation,
+TTL, full-text search, generated values, JSON, binary data, bulk reads, and bulk
+writes.
+
+## Native Handles
+
+Use `nativeHandle(...)` when you need the underlying client object.
+
+```java title="MongoNativeHandle.java"
+import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.Indexes;
+
+MongoDatabase database = tava.nativeHandle(MongoDatabase.class);
+
+database.getCollection("accounts")
+        .createIndex(Indexes.text("bio"));
+```
+
+For JDBC adapters, use callback-style native access so the connection lifecycle stays
+under adapter control.
+
+```java title="JdbcNativeAccess.java"
+import java.sql.Connection;
+
+tava.nativeAccess().withNative(Connection.class, connection -> {
+    try (var statement = connection.createStatement()) {
+        statement.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm");
+    }
+    return null;
+});
+```
+
+## When To Use Native Access
+
+<Cards>
+  <Card title="Good fit">
+    Full-text indexes, vendor extensions, bulk loaders, session settings, explain plans,
+    transactions with backend-specific semantics, and maintenance operations.
+  </Card>
+  <Card title="Poor fit">
+    Code that should behave the same across all adapters. Keep that in `Schema`,
+    `Entity<T>`, `Records`, and `Query`.
+  </Card>
+</Cards>
+
+## Keep The Boundary Clear
+
+```java title="RepositoryBoundary.java"
+final class AccountRepository {
+    private final Tava tava;
+
+    AccountRepository(Tava tava) {
+        this.tava = tava;
+    }
+
+    Page<Account> activeAccounts() {
+        return tava.entity(Account.class).find(Query.builder()
+                .where(Predicate.eq("status", "active"))
+                .sort(Sort.asc("email"))
+                .limit(100)
+                .build());
+    }
+
+    void createSearchIndex() {
+        tava.nativeAccess().withNative(Connection.class, connection -> {
+            try (var statement = connection.createStatement()) {
+                statement.execute("CREATE INDEX IF NOT EXISTS accounts_email_trgm ON accounts USING gin (email gin_trgm_ops)");
+            }
+            return null;
+        });
+    }
+}
+```
+
+This keeps ordinary application reads and writes portable while making the native
+dependency obvious at the call site.

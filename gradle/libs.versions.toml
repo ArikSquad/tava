@@ -1,15 +1,17 @@
 [versions]
 junit = "6.1.0"
 h2 = "2.4.240"
-mongodb = "5.6.2"
+mongodb = "5.8.0"
 mysql = "9.7.0"
 postgresql = "42.7.11"
 sqlite = "3.53.2.0"
 slf4j = "2.0.17"
-aws = "2.31.54"
+aws = "2.46.15"
 mariadb = "3.5.3"
 mssql = "13.4.0.jre11"
 oracle = "23.26.2.0.0"
+jetbrains-annotations = "26.0.2"
+testcontainers = "2.0.5"
 
 [libraries]
 mongodb-driver-sync = { module = "org.mongodb:mongodb-driver-sync", version.ref = "mongodb" }
@@ -25,3 +27,13 @@ aws-dynamodb = { module = "software.amazon.awssdk:dynamodb", version.ref = "aws"
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+jetbrains-annotations = { module = "org.jetbrains:annotations", version.ref = "jetbrains-annotations" }
+testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
+testcontainers-junit = { module = "org.testcontainers:testcontainers-junit-jupiter" }
+testcontainers-localstack = { module = "org.testcontainers:testcontainers-localstack" }
+testcontainers-mariadb = { module = "org.testcontainers:testcontainers-mariadb" }
+testcontainers-mongodb = { module = "org.testcontainers:testcontainers-mongodb" }
+testcontainers-mssqlserver = { module = "org.testcontainers:testcontainers-mssqlserver" }
+testcontainers-mysql = { module = "org.testcontainers:testcontainers-mysql" }
+testcontainers-oracle = { module = "org.testcontainers:testcontainers-oracle-xe" }
+testcontainers-postgres = { module = "org.testcontainers:testcontainers-postgresql" }

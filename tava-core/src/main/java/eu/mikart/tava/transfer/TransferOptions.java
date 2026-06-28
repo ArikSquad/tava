@@ -5,11 +5,11 @@ import eu.mikart.tava.data.EntityRecord;
 import java.util.function.UnaryOperator;
 
 public record TransferOptions(
-        int batchSize,
-        boolean allowLossy,
-        boolean applySchema,
-        UnaryOperator<EntityRecord> transform,
-        ProgressListener progress
+    int batchSize,
+    boolean allowLossy,
+    boolean applySchema,
+    UnaryOperator<EntityRecord> transform,
+    ProgressListener progress
 ) {
     public TransferOptions {
         if (batchSize < 1) throw new IllegalArgumentException("batchSize must be positive");
@@ -23,8 +23,7 @@ public record TransferOptions(
 
     @FunctionalInterface
     public interface ProgressListener {
-        ProgressListener NONE = (entity, count) -> {
-        };
+        ProgressListener NONE = (entity, count) -> {};
 
         void transferred(String entity, long count);
     }

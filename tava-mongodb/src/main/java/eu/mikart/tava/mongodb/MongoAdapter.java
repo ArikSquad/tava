@@ -19,6 +19,7 @@ import eu.mikart.tava.schema.plan.SchemaPlan;
 import eu.mikart.tava.spi.*;
 import org.bson.Document;
 import org.bson.conversions.Bson;
+import org.jetbrains.annotations.NotNull;
 
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -37,12 +38,12 @@ final class MongoAdapter implements Adapter {
     }
 
     @Override
-    public String name() {
+    public @NotNull String name() {
         return "mongodb";
     }
 
     @Override
-    public Capabilities capabilities() {
+    public @NotNull Capabilities capabilities() {
         return Capabilities.builder(name())
                 .supported(Feature.SECONDARY_INDEXES, Feature.TRANSACTIONS, Feature.CONDITIONAL_WRITES,
                         Feature.SORTING, Feature.PAGINATION, Feature.PROJECTION, Feature.AGGREGATION,
@@ -56,17 +57,17 @@ final class MongoAdapter implements Adapter {
     }
 
     @Override
-    public SchemaManager schemas() {
+    public @NotNull SchemaManager schemas() {
         return schemas;
     }
 
     @Override
-    public EntityStore entities() {
+    public @NotNull EntityStore entities() {
         return entities;
     }
 
     @Override
-    public NativeAccess nativeAccess() {
+    public @NotNull NativeAccess nativeAccess() {
         return new NativeAccess() {
             @Override
             public <T> T nativeHandle(Class<T> type) {
@@ -88,14 +89,14 @@ final class MongoAdapter implements Adapter {
 
     private final class Store implements EntityStore {
         @Override
-        public EntityRecord insert(String entity, EntityRecord record) {
+        public @NotNull EntityRecord insert(@NotNull String entity, @NotNull EntityRecord record) {
             Document document = new Document(record.values());
             collection(entity).insertOne(document);
             return EntityRecord.of(document);
         }
 
         @Override
-        public Page<EntityRecord> find(String entity, Query query) {
+        public @NotNull Page<EntityRecord> find(@NotNull String entity, @NotNull Query query) {
             var result = collection(entity).find(filter(query.predicate()));
             if (!query.projection().isEmpty()) {
                 Document projection = new Document();
@@ -118,7 +119,7 @@ final class MongoAdapter implements Adapter {
         }
 
         @Override
-        public long update(String entity, Predicate predicate, Mutation mutation) {
+        public long update(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
             if (mutation.values().isEmpty()) return 0;
             List<Bson> updates = mutation.values().entrySet().stream()
                     .map(entry -> Updates.set(entry.getKey(), entry.getValue())).map(Bson.class::cast).toList();
@@ -126,14 +127,14 @@ final class MongoAdapter implements Adapter {
         }
 
         @Override
-        public long delete(String entity, Predicate predicate) {
+        public long delete(@NotNull String entity, @NotNull Predicate predicate) {
             return collection(entity).deleteMany(filter(predicate)).getDeletedCount();
         }
     }
 
     private final class Schemas implements SchemaManager {
         @Override
-        public Schema inspect() {
+        public @NotNull Schema inspect() {
             List<EntityDefinition> entities = new ArrayList<>();
             for (String name : database.listCollectionNames()) {
                 entities.add(new EntityDefinition(name, List.of(), List.of(), Map.of("mongodb.schema", "dynamic")));
@@ -142,7 +143,7 @@ final class MongoAdapter implements Adapter {
         }
 
         @Override
-        public SchemaPlan plan(Schema desired) {
+        public @NotNull SchemaPlan plan(@NotNull Schema desired) {
             Set<String> current = new HashSet<>(database.listCollectionNames().into(new ArrayList<>()));
             List<SchemaChange> changes = new ArrayList<>();
             List<Runnable> operations = new ArrayList<>();

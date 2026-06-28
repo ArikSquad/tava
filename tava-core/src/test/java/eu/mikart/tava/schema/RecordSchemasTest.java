@@ -20,6 +20,22 @@ class RecordSchemasTest {
         assertEquals("JSONB", entity.field("metadata").settings().get("postgres.type"));
     }
 
+    @Test
+    void createsSchemaFromConsumerDsl() {
+        Schema schema = Schema.builder().entity("accounts", entity -> {
+            entity.uuid("id").identity().notNull();
+            entity.string("email").required().unique().field(255);
+            entity.integer("score");
+        }).build();
+
+        EntityDefinition entity = schema.entity("accounts");
+        assertTrue(entity.field("id").identity());
+        assertFalse(entity.field("id").nullable());
+        assertEquals(FieldType.string(255), entity.field("email").type());
+        assertTrue(entity.field("email").unique());
+        assertEquals(FieldType.of(LogicalType.INT32), entity.field("score").type());
+    }
+
     @Entity("accounts")
     record Account(
             @Identity UUID id,

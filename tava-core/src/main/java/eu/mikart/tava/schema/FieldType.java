@@ -1,6 +1,14 @@
 package eu.mikart.tava.schema;
 
-public record FieldType(LogicalType logicalType, Integer length, Integer precision, Integer scale) {
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+public record FieldType(
+        @NotNull LogicalType logicalType,
+        @Nullable Integer length,
+        @Nullable Integer precision,
+        @Nullable Integer scale
+) {
     public FieldType {
         if (logicalType == null) throw new IllegalArgumentException("logicalType is required");
         if (length != null && length < 1) throw new IllegalArgumentException("length must be positive");
@@ -10,15 +18,15 @@ public record FieldType(LogicalType logicalType, Integer length, Integer precisi
         }
     }
 
-    public static FieldType of(LogicalType type) {
+    public static @NotNull FieldType of(final @NotNull LogicalType type) {
         return new FieldType(type, null, null, null);
     }
 
-    public static FieldType string(int length) {
+    public static @NotNull FieldType string(final int length) {
         return new FieldType(LogicalType.STRING, length, null, null);
     }
 
-    public static FieldType decimal(int precision, int scale) {
+    public static @NotNull FieldType decimal(final int precision, final int scale) {
         return new FieldType(LogicalType.DECIMAL, null, precision, scale);
     }
 }

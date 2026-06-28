@@ -1,0 +1,176 @@
+---
+title: Adapters
+description: Connect Tava to JDBC databases, MongoDB, or DynamoDB.
+icon: Cable
+---
+
+Adapters are intentionally thin. They translate the canonical schema and query model
+to a backend, expose capabilities, and provide native access for work that should stay
+backend-specific.
+
+## Modules
+
+| Module | Backend |
+| --- | --- |
+| `tava-postgres` | PostgreSQL and compatible JDBC endpoints |
+| `tava-mysql` | MySQL and MariaDB |
+| `tava-sqlite` | SQLite files and shared in-memory databases |
+| `tava-h2` | H2, mainly useful for tests and local tools |
+| `tava-sqlserver` | Microsoft SQL Server |
+| `tava-oracle` | Oracle Database |
+| `tava-mongodb` | MongoDB sync driver |
+| `tava-dynamodb` | AWS SDK DynamoDB client |
+
+## JDBC Adapters
+
+```java tab="PostgreSQL"
+try (Tava tava = Tava.open(Postgres.connect(
+        "jdbc:postgresql://localhost:5432/app",
+        "app",
+        "secret"))) {
+    // use Tava
+}
+
+try (Tava tava = Tava.open(Postgres.connect(
+        "localhost",
+        5432,
+        "app",
+        "app",
+        "secret"))) {
+    // same adapter, host-based helper
+}
+```
+
+```java tab="MySQL"
+try (Tava tava = Tava.open(MySql.connect(
+        "jdbc:mysql://localhost:3306/app",
+        "app",
+        "secret"))) {
+    // use Tava
+}
+
+try (Tava tava = Tava.open(MySql.mariaDb(
+        "jdbc:mariadb://localhost:3306/app",
+        "app",
+        "secret"))) {
+    // MariaDB profile
+}
+```
+
+```java tab="SQLite"
+try (Tava tava = Tava.open(Sqlite.file(Path.of("app.db")))) {
+    // persistent file
+}
+
+try (Tava tava = Tava.open(Sqlite.memory("app-tests"))) {
+    // shared in-memory database
+}
+```
+
+```java tab="H2"
+try (Tava tava = Tava.open(H2.memory("app-tests"))) {
+    // in-memory H2
+}
+
+try (Tava tava = Tava.open(H2.connect(
+        "jdbc:h2:file:./app",
+        "sa",
+        ""))) {
+    // custom H2 URL
+}
+```
+
+```java tab="SQL Server"
+try (Tava tava = Tava.open(SqlServer.connect(
+        "jdbc:sqlserver://localhost:1433;databaseName=app",
+        "app",
+        "secret"))) {
+    // use Tava
+}
+```
+
+```java tab="Oracle"
+try (Tava tava = Tava.open(Oracle.connect(
+        "jdbc:oracle:thin:@localhost:1521/FREEPDB1",
+        "app",
+        "secret"))) {
+    // use Tava
+}
+```
+
+## MongoDB
+
+```java title="MongoConnection.java"
+import eu.mikart.tava.Tava;
+import eu.mikart.tava.mongodb.Mongo;
+
+try (Tava tava = Tava.open(Mongo.connect(
+        "mongodb://localhost:27017",
+        "app"))) {
+    // Tava owns the MongoClient created from the connection string.
+}
+```
+
+If your application already manages the client lifecycle, pass it in:
+
+```java title="ExistingMongoClient.java"
+MongoClient client = MongoClients.create(connectionString);
+
+try (Tava tava = Tava.open(Mongo.use(client, "app"))) {
+    // Tava does not close the externally owned client.
+}
+```
+
+## DynamoDB
+
+```java title="DynamoDbConnection.java"
+import eu.mikart.tava.Tava;
+import eu.mikart.tava.dynamodb.DynamoDb;
+
+try (Tava tava = Tava.open(DynamoDb.createDefault())) {
+    // Uses DynamoDbClient.create().
+}
+
+DynamoDbClient client = DynamoDbClient.builder().build();
+try (Tava tava = Tava.open(DynamoDb.use(client))) {
+    // Tava does not own the externally supplied client.
+}
+```
+
+Mark the partition key on the record component:
+
+```java title="DynamoEntity.java"
+import eu.mikart.tava.dynamodb.DynamoPartitionKey;
+
+record Device(
+        @DynamoPartitionKey String tenantId,
+        String id,
+        String status
+) {}
+```
+
+## Native Type Defaults
+
+Adapters choose sensible native defaults for logical types. A few examples:
+
+| Logical type | PostgreSQL | MySQL | SQLite | SQL Server | Oracle |
+| --- | --- | --- | --- | --- | --- |
+| `UUID` | `UUID` | adapter default | `TEXT` | `UNIQUEIDENTIFIER` | `VARCHAR2(36)` |
+| `JSON` | `JSONB` | `JSON` | `TEXT` | `NVARCHAR(MAX)` | `CLOB` |
+| `BINARY` | `BYTEA` | `LONGBLOB` | `BLOB` | `VARBINARY(MAX)` | `BLOB` |
+| `INSTANT` | `TIMESTAMP WITH TIME ZONE` | adapter default | `TEXT` | `DATETIMEOFFSET` | `TIMESTAMP WITH TIME ZONE` |
+
+Use typed adapter annotations when the default is not the storage shape you want.
+
+```java title="NativeTypeOverride.java"
+record AuditEvent(
+        @PostgresType("JSONB")
+        @OracleType("CLOB")
+        Map<String, Object> payload
+) {}
+```
+
+<Callout type="idea" title="Managed services">
+Managed databases that expose the same protocol use the same adapter. For example,
+a managed PostgreSQL endpoint still uses `tava-postgres`.
+</Callout>

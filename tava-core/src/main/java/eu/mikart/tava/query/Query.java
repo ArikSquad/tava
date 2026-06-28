@@ -1,13 +1,16 @@
 package eu.mikart.tava.query;
 
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
 import java.util.List;
 
 public record Query(
-        Predicate predicate,
-        List<String> projection,
-        List<Sort> sorting,
+        @NotNull Predicate predicate,
+        @NotNull List<String> projection,
+        @NotNull List<Sort> sorting,
         int limit,
-        String cursor
+        @Nullable String cursor
 ) {
     public Query {
         predicate = predicate == null ? Predicate.all() : predicate;
@@ -16,11 +19,11 @@ public record Query(
         if (limit < 0) throw new IllegalArgumentException("limit must be >= 0");
     }
 
-    public static Builder builder() {
+    public static @NotNull Builder builder() {
         return new Builder();
     }
 
-    public static Query all() {
+    public static @NotNull Query all() {
         return builder().build();
     }
 
@@ -31,32 +34,32 @@ public record Query(
         private int limit;
         private String cursor;
 
-        public Builder where(Predicate predicate) {
+        public @NotNull Builder where(final @Nullable Predicate predicate) {
             this.predicate = predicate;
             return this;
         }
 
-        public Builder project(String... fields) {
+        public @NotNull Builder project(final @NotNull String... fields) {
             this.projection = List.of(fields);
             return this;
         }
 
-        public Builder sort(Sort... values) {
+        public @NotNull Builder sort(final @NotNull Sort... values) {
             sorting.addAll(List.of(values));
             return this;
         }
 
-        public Builder limit(int value) {
+        public @NotNull Builder limit(final int value) {
             this.limit = value;
             return this;
         }
 
-        public Builder cursor(String value) {
+        public @NotNull Builder cursor(final @Nullable String value) {
             this.cursor = value;
             return this;
         }
 
-        public Query build() {
+        public @NotNull Query build() {
             return new Query(predicate, projection, sorting, limit, cursor);
         }
     }

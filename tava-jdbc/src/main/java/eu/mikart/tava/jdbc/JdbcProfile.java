@@ -2,25 +2,26 @@ package eu.mikart.tava.jdbc;
 
 import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.schema.FieldDefinition;
+import org.jetbrains.annotations.NotNull;
 
 public interface JdbcProfile {
-    String name();
+    @NotNull String name();
 
-    String quote(String identifier);
+    @NotNull String quote(@NotNull String identifier);
 
-    String type(FieldDefinition field);
+    @NotNull String type(@NotNull FieldDefinition field);
 
-    String identityClause(FieldDefinition field);
+    @NotNull String identityClause(@NotNull FieldDefinition field);
 
     boolean supportsIfNotExists();
 
-    default String pagination(int limit, int offset) {
+    default @NotNull String pagination(final int limit, final int offset) {
         return " LIMIT " + limit + " OFFSET " + offset;
     }
 
-    default String defaultPaginationOrder() {
+    default @NotNull String defaultPaginationOrder() {
         return "";
     }
 
-    Capabilities capabilities();
+    @NotNull Capabilities capabilities();
 }
