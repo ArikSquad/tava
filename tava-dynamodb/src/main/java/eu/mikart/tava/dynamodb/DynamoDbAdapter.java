@@ -94,8 +94,10 @@ final class DynamoDbAdapter implements Adapter {
             Expression expression = expression(query.predicate());
             ScanRequest.Builder request = ScanRequest.builder().tableName(entity)
                     .limit(query.limit() == 0 ? 500 : query.limit());
-            if (expression.text != null) request.filterExpression(expression.text)
-                    .expressionAttributeNames(expression.names).expressionAttributeValues(expression.values);
+            if (expression.text != null) {
+                request.filterExpression(expression.text).expressionAttributeNames(expression.names);
+                if (!expression.values.isEmpty()) request.expressionAttributeValues(expression.values);
+            }
             if (!query.projection().isEmpty()) {
                 Map<String, String> names = new HashMap<>(expression.names);
                 List<String> projected = new ArrayList<>();

@@ -289,6 +289,7 @@ public final class JdbcAdapter implements Adapter {
                 .append(nativeType == null ? profile.type(field) : nativeType);
         String identity = profile.identityClause(field);
         if (!identity.isBlank()) sql.append(' ').append(identity);
+        if (field.generated() == GeneratedValue.NOW) sql.append(" DEFAULT CURRENT_TIMESTAMP");
         if (!field.nullable()) sql.append(" NOT NULL");
         if (field.unique()) sql.append(" UNIQUE");
         return sql.toString();
