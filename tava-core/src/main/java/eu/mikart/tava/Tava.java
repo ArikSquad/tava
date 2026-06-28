@@ -12,6 +12,12 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Objects;
 
+/**
+ * Main entry point for working with a Tava adapter.
+ * <p>
+ * A {@code Tava} instance owns the adapter passed to {@link #open(Adapter)} and closes it from
+ * {@link #close()}. Create separate instances when you need independent adapter lifecycles.
+ */
 public final class Tava implements AutoCloseable {
     private final Adapter adapter;
 
@@ -19,6 +25,12 @@ public final class Tava implements AutoCloseable {
         this.adapter = Objects.requireNonNull(adapter);
     }
 
+    /**
+     * Opens a Tava facade over the given adapter.
+     *
+     * @param adapter adapter implementation to use for schema, data, and native access
+     * @return a facade that delegates all operations to {@code adapter}
+     */
     public static @NotNull Tava open(final @NotNull Adapter adapter) {
         return new Tava(adapter);
     }
@@ -35,6 +47,10 @@ public final class Tava implements AutoCloseable {
         return adapter.schemas();
     }
 
+    /**
+     * Builds a schema plan by comparing the desired schema with the adapter's current schema.
+     * The returned plan is inert until {@link SchemaPlan#apply()} is called.
+     */
     public @NotNull SchemaPlan plan(final @NotNull Schema desired) {
         return schema().plan(desired);
     }
@@ -43,14 +59,27 @@ public final class Tava implements AutoCloseable {
         return new Migrations(this);
     }
 
+    /**
+     * Returns a typed record facade for the entity inferred from the record annotations.
+     * Use {@link #records(String)} when you need partial projections or dynamic field sets.
+     */
     public <T extends Record> @NotNull Entity<T> entity(final @NotNull Class<T> type) {
         return new Entity<>(RecordSchemas.describe(type).name(), adapter.entities(), type);
     }
 
+    /**
+     * Returns a typed record facade for an explicit entity name.
+     * Use {@link #records(String)} when you need partial projections or dynamic field sets.
+     */
     public <T extends Record> @NotNull Entity<T> entity(final @NotNull String name, final @NotNull Class<T> type) {
         return new Entity<>(name, adapter.entities(), type);
     }
 
+    /**
+     * Returns an untyped record facade for dynamic records, partial projections, and schema-free workflows.
+     *
+     * @param entity name of the entity
+     */
     public @NotNull Records records(final @NotNull String entity) {
         return new Records(entity, adapter.entities());
     }
