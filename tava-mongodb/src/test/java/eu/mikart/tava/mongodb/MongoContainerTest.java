@@ -7,6 +7,7 @@ import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.Sort;
 import eu.mikart.tava.schema.Schema;
+import eu.mikart.tava.testkit.AdapterContractTest;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -17,9 +18,19 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 @Testcontainers
-class MongoContainerTest {
+class MongoContainerTest extends AdapterContractTest {
     @Container
     static final MongoDBContainer MONGO = new MongoDBContainer("mongo:7.0");
+
+    @Override
+    protected Tava openTava(String namespace) {
+        return Tava.open(Mongo.connect(MONGO.getConnectionString(), namespace));
+    }
+
+    @Override
+    protected boolean supportsIsolatedTransferTargets() {
+        return true;
+    }
 
     @Test
     void runsSchemaCrudProjectionAndPaging() {

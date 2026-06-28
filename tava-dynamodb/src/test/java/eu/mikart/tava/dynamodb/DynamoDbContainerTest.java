@@ -6,6 +6,7 @@ import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.Schema;
+import eu.mikart.tava.testkit.AdapterContractTest;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -22,11 +23,30 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 @Testcontainers
-class DynamoDbContainerTest {
+class DynamoDbContainerTest extends AdapterContractTest {
     @Container
     static final LocalStackContainer LOCALSTACK =
             new LocalStackContainer(DockerImageName.parse("localstack/localstack:4.4.0"))
                     .withServices("dynamodb");
+
+    @Override
+    protected Tava openTava(String namespace) {
+        return Tava.open(DynamoDb.use(DynamoDbClient.builder()
+                .endpointOverride(LOCALSTACK.getEndpoint())
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
+                .region(Region.of(LOCALSTACK.getRegion()))
+                .build()));
+    }
+
+    @Override
+    protected boolean supportsGlobalSorting() {
+        return false;
+    }
+
+    @Override
+    protected boolean supportsInPredicate() {
+        return false;
+    }
 
     @Test
     void runsSchemaCrudProjectionAndCursorPaging() {

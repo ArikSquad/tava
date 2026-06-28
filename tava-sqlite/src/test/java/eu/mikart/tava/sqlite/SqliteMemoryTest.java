@@ -5,11 +5,22 @@ import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.annotation.Identity;
+import eu.mikart.tava.testkit.AdapterContractTest;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-class SqliteMemoryTest {
+class SqliteMemoryTest extends AdapterContractTest {
+    @Override
+    protected Tava openTava(String namespace) {
+        return Tava.open(Sqlite.memory(namespace));
+    }
+
+    @Override
+    protected boolean supportsIsolatedTransferTargets() {
+        return true;
+    }
+
     @Test
     void memoryDatabaseSurvivesPerOperationConnections() {
         try (Tava tava = Tava.open(Sqlite.memory("contract"))) {

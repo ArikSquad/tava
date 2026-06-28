@@ -7,6 +7,7 @@ import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.Sort;
 import eu.mikart.tava.schema.Schema;
+import eu.mikart.tava.testkit.AdapterContractTest;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -17,10 +18,16 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 @Testcontainers
-class SqlServerContainerTest {
+class SqlServerContainerTest extends AdapterContractTest {
     @Container
     static final MSSQLServerContainer SQL_SERVER =
             new MSSQLServerContainer("mcr.microsoft.com/mssql/server:2022-latest").acceptLicense();
+
+    @Override
+    protected Tava openTava(String namespace) {
+        return Tava.open(SqlServer.connect(SQL_SERVER.getJdbcUrl(),
+                SQL_SERVER.getUsername(), SQL_SERVER.getPassword()));
+    }
 
     @Test
     void runsCrudPredicatesAndOffsetPagination() {

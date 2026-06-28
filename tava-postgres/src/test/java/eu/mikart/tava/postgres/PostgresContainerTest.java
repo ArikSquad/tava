@@ -7,6 +7,7 @@ import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.Sort;
 import eu.mikart.tava.schema.Schema;
+import eu.mikart.tava.testkit.AdapterContractTest;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -19,9 +20,15 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 @Testcontainers
-class PostgresContainerTest {
+class PostgresContainerTest extends AdapterContractTest {
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+
+    @Override
+    protected Tava openTava(String namespace) {
+        return Tava.open(Postgres.connect(POSTGRES.getJdbcUrl(),
+                POSTGRES.getUsername(), POSTGRES.getPassword()));
+    }
 
     @Test
     void runsCrudPredicatesPagingAndNativeAccess() {

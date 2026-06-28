@@ -5,6 +5,7 @@ dependencies {
     testImplementation(platform(libs.junit.bom))
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation(libs.junit.jupiter)
+    testImplementation(testFixtures(project(":tava-core")))
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.localstack)
     testRuntimeOnly(libs.junit.launcher)

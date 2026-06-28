@@ -10,6 +10,7 @@ import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.GeneratedValue;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.annotation.*;
+import eu.mikart.tava.testkit.AdapterContractTest;
 import eu.mikart.tava.transfer.DataTransfer;
 import eu.mikart.tava.transfer.TransferOptions;
 import org.junit.jupiter.api.Test;
@@ -20,7 +21,17 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class H2ContractTest {
+class H2ContractTest extends AdapterContractTest {
+    @Override
+    protected Tava openTava(String namespace) {
+        return Tava.open(H2.memory(namespace));
+    }
+
+    @Override
+    protected boolean supportsIsolatedTransferTargets() {
+        return true;
+    }
+
     @Test
     void schemaCrudNativeAndTransfer() {
         Schema schema = Schema.builder().record(Account.class).build();

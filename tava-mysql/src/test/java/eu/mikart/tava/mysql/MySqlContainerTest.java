@@ -6,6 +6,7 @@ import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.Schema;
+import eu.mikart.tava.testkit.AdapterContractTest;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -15,12 +16,17 @@ import org.testcontainers.mysql.MySQLContainer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @Testcontainers
-class MySqlContainerTest {
+class MySqlContainerTest extends AdapterContractTest {
     @Container
     static final MySQLContainer MYSQL = new MySQLContainer("mysql:9.2");
 
     @Container
     static final MariaDBContainer MARIADB = new MariaDBContainer("mariadb:11.8");
+
+    @Override
+    protected Tava openTava(String namespace) {
+        return Tava.open(MySql.connect(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword()));
+    }
 
     @Test
     void mysqlRunsSchemaAndCrudContract() {

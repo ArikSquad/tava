@@ -1,5 +1,6 @@
 plugins {
     `java-library`
+    `java-test-fixtures`
     `maven-publish`
 }
 
@@ -8,6 +9,8 @@ dependencies {
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.launcher)
+    testFixturesImplementation(platform(libs.junit.bom))
+    testFixturesImplementation(libs.junit.jupiter)
 }
 
 publishing {

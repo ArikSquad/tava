@@ -5,6 +5,7 @@ dependencies {
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
+    testImplementation(testFixtures(project(":tava-core")))
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.mssqlserver)
     testRuntimeOnly(libs.junit.launcher)

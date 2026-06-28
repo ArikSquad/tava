@@ -6,6 +6,7 @@ import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.Schema;
+import eu.mikart.tava.testkit.AdapterContractTest;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.OracleContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -14,11 +15,17 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @Testcontainers
-class OracleContainerTest {
+class OracleContainerTest extends AdapterContractTest {
     @Container
     static final OracleContainer ORACLE = new OracleContainer("gvenzl/oracle-xe:21-slim-faststart")
             .withUsername("tava")
             .withPassword("tava");
+
+    @Override
+    protected Tava openTava(String namespace) {
+        return Tava.open(Oracle.connect(ORACLE.getJdbcUrl(),
+                ORACLE.getUsername(), ORACLE.getPassword()));
+    }
 
     @Test
     void runsCrudPredicatesAndPagination() {
