@@ -333,6 +333,14 @@ public final class JdbcAdapter implements Adapter {
     private String predicateSql(Predicate predicate, List<Object> parameters) {
         if (predicate instanceof Predicate.Comparison comparison) {
             String field = profile.quote(comparison.field());
+            if (comparison.value() == null) {
+                return switch (comparison.operator()) {
+                    case EQ -> field + " IS NULL";
+                    case NE -> field + " IS NOT NULL";
+                    default -> throw new TavaException.Capability(
+                            "JDBC predicate " + comparison.operator() + " does not support null values");
+                };
+            }
             if (comparison.operator() == Predicate.Operator.IN) {
                 if (!(comparison.value() instanceof Collection<?> values) || values.isEmpty())
                     throw new IllegalArgumentException("IN requires at least one value");
@@ -368,7 +376,6 @@ public final class JdbcAdapter implements Adapter {
         int index = 1;
         for (Object value : values) {
             if (value instanceof java.time.Instant instant) statement.setTimestamp(index++, Timestamp.from(instant));
-            else if (value instanceof UUID uuid) statement.setObject(index++, uuid.toString());
             else statement.setObject(index++, value);
         }
     }
