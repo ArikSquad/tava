@@ -22,7 +22,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
         }
     }
 
-    enum Operator {EQ, NE, LT, LTE, GT, GTE, IN, CONTAINS, STARTS_WITH}
+    enum Operator {EQ, NE, LT, LTE, GT, GTE, IN, CONTAINS, STARTS_WITH, IS_NULL, IS_NOT_NULL}
 
     static @NotNull Predicate all() {
         return new All();
@@ -34,6 +34,14 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
 
     static @NotNull Predicate ne(final @NotNull String field, final @Nullable Object value) {
         return new Comparison(field, Operator.NE, value);
+    }
+
+    static @NotNull Predicate isNull(final @NotNull String field) {
+        return new Comparison(field, Operator.IS_NULL, null);
+    }
+
+    static @NotNull Predicate isNotNull(final @NotNull String field) {
+        return new Comparison(field, Operator.IS_NOT_NULL, null);
     }
 
     static @NotNull Predicate lt(final @NotNull String field, final @Nullable Object value) {

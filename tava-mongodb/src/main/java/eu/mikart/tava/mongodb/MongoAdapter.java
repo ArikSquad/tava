@@ -187,6 +187,8 @@ final class MongoAdapter implements Adapter {
                         java.util.regex.Pattern.quote(value1.toString())));
                 case STARTS_WITH -> new Document(field, new Document("$regex",
                         "^" + java.util.regex.Pattern.quote(value1.toString())));
+                case IS_NULL -> new Document(field, null);
+                case IS_NOT_NULL -> new Document(field, new Document("$ne", null));
             };
         }
         Predicate.Junction junction = (Predicate.Junction) predicate;

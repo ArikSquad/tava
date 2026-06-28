@@ -247,6 +247,14 @@ final class DynamoDbAdapter implements Adapter {
         if (predicate instanceof Predicate.Comparison value) {
             int i = sequence[0]++;
             names.put("#f" + i, value.field());
+            if (value.operator() == Predicate.Operator.IS_NULL) {
+                values.put(":nullType" + i, AttributeValue.builder().s("NULL").build());
+                return "attribute_not_exists(#f" + i + ") OR attribute_type(#f" + i + ", :nullType" + i + ")";
+            }
+            if (value.operator() == Predicate.Operator.IS_NOT_NULL) {
+                values.put(":nullType" + i, AttributeValue.builder().s("NULL").build());
+                return "attribute_exists(#f" + i + ") AND NOT attribute_type(#f" + i + ", :nullType" + i + ")";
+            }
             values.put(":v" + i, encode(value.value()));
             if (value.operator() == Predicate.Operator.CONTAINS)
                 return "contains(#f" + i + ", :v" + i + ")";

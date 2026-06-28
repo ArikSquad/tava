@@ -291,7 +291,6 @@ public final class JdbcAdapter implements Adapter {
         if (!identity.isBlank()) sql.append(' ').append(identity);
         if (!field.nullable()) sql.append(" NOT NULL");
         if (field.unique()) sql.append(" UNIQUE");
-        if (field.generated() == GeneratedValue.NOW) sql.append(" DEFAULT CURRENT_TIMESTAMP");
         return sql.toString();
     }
 
@@ -333,6 +332,8 @@ public final class JdbcAdapter implements Adapter {
     private String predicateSql(Predicate predicate, List<Object> parameters) {
         if (predicate instanceof Predicate.Comparison comparison) {
             String field = profile.quote(comparison.field());
+            if (comparison.operator() == Predicate.Operator.IS_NULL) return field + " IS NULL";
+            if (comparison.operator() == Predicate.Operator.IS_NOT_NULL) return field + " IS NOT NULL";
             if (comparison.value() == null) {
                 return switch (comparison.operator()) {
                     case EQ -> field + " IS NULL";
