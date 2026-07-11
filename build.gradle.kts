@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "eu.mikart.tava"
-version = providers.gradleProperty("releaseVersion").orElse("1.0.0-SNAPSHOT").get()
+version = "1.1.3"
 
 allprojects {
     group = rootProject.group
@@ -41,12 +41,19 @@ subprojects {
     plugins.withId("maven-publish") {
         extensions.configure<PublishingExtension> {
             repositories {
-                maven {
-                    name = "GitHubPackages"
-                    url = uri("https://maven.pkg.github.com/ArikSquad/tava")
-                    credentials {
-                        username = System.getenv("GITHUB_ACTOR")
-                        password = System.getenv("GITHUB_TOKEN")
+                maven("https://repo.codemc.io/repository/ArikSquad/") {
+                    val mavenUsername =
+                        providers.environmentVariable("JENKINS_USERNAME")
+                            .orElse(providers.gradleProperty("mavenUsername"))
+                    val mavenPassword =
+                        providers.environmentVariable("JENKINS_PASSWORD")
+                            .orElse(providers.gradleProperty("mavenPassword"))
+
+                    if (mavenUsername.isPresent && mavenPassword.isPresent) {
+                        credentials {
+                            username = mavenUsername.get()
+                            password = mavenPassword.get()
+                        }
                     }
                 }
             }
