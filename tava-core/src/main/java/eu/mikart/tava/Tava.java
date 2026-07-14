@@ -11,6 +11,9 @@ import eu.mikart.tava.spi.SchemaManager;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Objects;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
+import java.util.function.Function;
 
 /**
  * Main entry point for working with a Tava adapter.
@@ -20,9 +23,11 @@ import java.util.Objects;
  */
 public final class Tava implements AutoCloseable {
     private final Adapter adapter;
+    private final Executor executor;
 
-    private Tava(final @NotNull Adapter adapter) {
+    private Tava(final @NotNull Adapter adapter, final @NotNull Executor executor) {
         this.adapter = Objects.requireNonNull(adapter);
+        this.executor = Objects.requireNonNull(executor);
     }
 
     /**
@@ -32,8 +37,10 @@ public final class Tava implements AutoCloseable {
      * @return a facade that delegates all operations to {@code adapter}
      */
     public static @NotNull Tava open(final @NotNull Adapter adapter) {
-        return new Tava(adapter);
+        return new Tava(adapter, ForkJoinPool.commonPool());
     }
+
+    public static @NotNull Tava open(final @NotNull Adapter adapter, final @NotNull Executor executor) { return new Tava(adapter, executor); }
 
     public @NotNull String adapterName() {
         return adapter.name();
@@ -64,7 +71,7 @@ public final class Tava implements AutoCloseable {
      * Use {@link #records(String)} when you need partial projections or dynamic field sets.
      */
     public <T extends Record> @NotNull Entity<T> entity(final @NotNull Class<T> type) {
-        return new Entity<>(RecordSchemas.describe(type).name(), adapter.entities(), type);
+        return new Entity<>(RecordSchemas.describe(type).name(), adapter.entities(), type, executor);
     }
 
     /**
@@ -72,7 +79,7 @@ public final class Tava implements AutoCloseable {
      * Use {@link #records(String)} when you need partial projections or dynamic field sets.
      */
     public <T extends Record> @NotNull Entity<T> entity(final @NotNull String name, final @NotNull Class<T> type) {
-        return new Entity<>(name, adapter.entities(), type);
+        return new Entity<>(name, adapter.entities(), type, executor);
     }
 
     /**
@@ -82,6 +89,16 @@ public final class Tava implements AutoCloseable {
      */
     public @NotNull Records records(final @NotNull String entity) {
         return new Records(entity, adapter.entities());
+    }
+
+    @Blocking public <R> R transaction(final @NotNull Function<Tava, R> callback) {
+        return adapter.transactions().transaction(store -> callback.apply(new Tava(new TransactionAdapter(adapter, store), executor)));
+    }
+
+    private record TransactionAdapter(Adapter delegate, eu.mikart.tava.spi.EntityStore store) implements Adapter {
+        public String name() { return delegate.name(); } public Capabilities capabilities() { return delegate.capabilities(); }
+        public SchemaManager schemas() { return delegate.schemas(); } public eu.mikart.tava.spi.EntityStore entities() { return store; }
+        public NativeAccess nativeAccess() { return delegate.nativeAccess(); } public void close() { }
     }
 
     public @NotNull NativeAccess nativeAccess() {

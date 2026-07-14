@@ -32,6 +32,8 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
         return new Comparison(field, Operator.EQ, value);
     }
 
+    static <T> @NotNull Predicate eq(final @NotNull FieldRef<T> field, final @Nullable T value) { return eq(field.name(), value); }
+
     static @NotNull Predicate ne(final @NotNull String field, final @Nullable Object value) {
         return new Comparison(field, Operator.NE, value);
     }

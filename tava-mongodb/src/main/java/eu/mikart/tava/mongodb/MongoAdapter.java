@@ -5,6 +5,7 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.IndexOptions;
 import com.mongodb.client.model.Updates;
+import com.mongodb.client.model.UpdateOptions;
 import eu.mikart.tava.capability.*;
 import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.data.Page;
@@ -120,15 +121,44 @@ final class MongoAdapter implements Adapter {
 
         @Override
         public long update(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
-            if (mutation.values().isEmpty()) return 0;
-            List<Bson> updates = mutation.values().entrySet().stream()
-                    .map(entry -> Updates.set(entry.getKey(), entry.getValue())).map(Bson.class::cast).toList();
+            if (mutation.values().isEmpty() && mutation.operations().isEmpty()) return 0;
+            List<Bson> updates = new ArrayList<>(mutation.values().entrySet().stream()
+                    .map(entry -> Updates.set(entry.getKey(), entry.getValue())).map(Bson.class::cast).toList());
+            mutation.operations().forEach((field, operation) -> updates.add(switch (operation.kind()) {
+                case INCREMENT -> Updates.inc(field, (Number) operation.value());
+                case APPEND -> Updates.addToSet(field, operation.value());
+                case REMOVE -> Updates.pull(field, operation.value());
+            }));
             return collection(entity).updateMany(filter(predicate), Updates.combine(updates)).getModifiedCount();
+        }
+
+        @Override public @NotNull eu.mikart.tava.data.MutationResult updateResult(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
+            if (mutation.values().isEmpty() && mutation.operations().isEmpty()) return new eu.mikart.tava.data.MutationResult(0, 0, 0, eu.mikart.tava.data.MutationResult.Outcome.UNCHANGED);
+            List<Bson> updates = new ArrayList<>(); mutation.values().forEach((field, value) -> updates.add(Updates.set(field, value)));
+            mutation.operations().forEach((field, operation) -> updates.add(switch (operation.kind()) { case INCREMENT -> Updates.inc(field, (Number) operation.value()); case APPEND -> Updates.addToSet(field, operation.value()); case REMOVE -> Updates.pull(field, operation.value()); }));
+            var result = collection(entity).updateMany(filter(predicate), Updates.combine(updates));
+            return new eu.mikart.tava.data.MutationResult(result.getMatchedCount(), result.getModifiedCount(), 0,
+                    result.getModifiedCount() == 0 ? eu.mikart.tava.data.MutationResult.Outcome.UNCHANGED : eu.mikart.tava.data.MutationResult.Outcome.UPDATED);
         }
 
         @Override
         public long delete(@NotNull String entity, @NotNull Predicate predicate) {
             return collection(entity).deleteMany(filter(predicate)).getDeletedCount();
+        }
+
+        @Override public @NotNull eu.mikart.tava.data.MutationResult upsert(@NotNull String entity, @NotNull Predicate identity, @NotNull EntityRecord insert, @NotNull Mutation update) {
+            List<Bson> changes = new ArrayList<>();
+            insert.values().forEach((field, value) -> changes.add(Updates.setOnInsert(field, value)));
+            update.values().forEach((field, value) -> changes.add(Updates.set(field, value)));
+            update.operations().forEach((field, operation) -> changes.add(switch (operation.kind()) {
+                case INCREMENT -> Updates.inc(field, (Number) operation.value());
+                case APPEND -> Updates.addToSet(field, operation.value());
+                case REMOVE -> Updates.pull(field, operation.value());
+            }));
+            var result = collection(entity).updateOne(filter(identity), Updates.combine(changes), new UpdateOptions().upsert(true));
+            boolean inserted = result.getUpsertedId() != null;
+            return new eu.mikart.tava.data.MutationResult(result.getMatchedCount(), result.getModifiedCount(), 0,
+                    inserted ? eu.mikart.tava.data.MutationResult.Outcome.INSERTED : eu.mikart.tava.data.MutationResult.Outcome.UPDATED);
         }
     }
 

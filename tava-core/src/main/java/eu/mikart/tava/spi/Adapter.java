@@ -14,6 +14,8 @@ public interface Adapter extends AutoCloseable {
 
     @NotNull NativeAccess nativeAccess();
 
+    default @NotNull TransactionManager transactions() { return TransactionManager.unsupported(); }
+
     @Override
     void close();
 }

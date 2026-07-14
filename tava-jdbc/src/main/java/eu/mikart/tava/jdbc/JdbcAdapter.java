@@ -78,6 +78,26 @@ public final class JdbcAdapter implements Adapter {
     }
 
     @Override
+    public @NotNull TransactionManager transactions() {
+        return new TransactionManager() {
+            @Override public <R> R transaction(@NotNull Function<EntityStore, R> callback) {
+                try (Connection connection = connections.open()) {
+                    boolean autoCommit = connection.getAutoCommit();
+                    connection.setAutoCommit(false);
+                    try {
+                        R result = callback.apply(new JdbcStore(connection));
+                        connection.commit();
+                        return result;
+                    } catch (Throwable failure) {
+                        try { connection.rollback(); } catch (SQLException rollback) { failure.addSuppressed(rollback); }
+                        throw failure;
+                    } finally { connection.setAutoCommit(autoCommit); }
+                } catch (SQLException failure) { throw data("Run transaction", failure); }
+            }
+        };
+    }
+
+    @Override
     public @NotNull NativeAccess nativeAccess() {
         return new NativeAccess() {
             @Override
@@ -111,6 +131,10 @@ public final class JdbcAdapter implements Adapter {
     }
 
     private final class JdbcStore implements EntityStore {
+        private final Connection transaction;
+        JdbcStore() { this.transaction = null; }
+        JdbcStore(Connection transaction) { this.transaction = transaction; }
+        private Lease lease() throws SQLException { return transaction == null ? new Lease(connections.open(), true) : new Lease(transaction, false); }
         @Override
         public @NotNull EntityRecord insert(@NotNull String entity, @NotNull EntityRecord record) {
             if (record.values().isEmpty()) throw new IllegalArgumentException("record has no values");
@@ -118,13 +142,24 @@ public final class JdbcAdapter implements Adapter {
             String sql = "INSERT INTO " + profile.quote(entity) + " (" + fields.stream().map(profile::quote)
                     .collect(java.util.stream.Collectors.joining(", ")) + ") VALUES (" +
                     String.join(", ", Collections.nCopies(fields.size(), "?")) + ")";
-            try (Connection c = connections.open(); PreparedStatement ps = c.prepareStatement(sql)) {
+            try (Lease lease = lease(); PreparedStatement ps = lease.connection.prepareStatement(sql)) {
                 bind(ps, record.values().values());
                 ps.executeUpdate();
                 return record;
             } catch (SQLException e) {
                 throw data("Insert into " + entity, e);
             }
+        }
+
+        @Override public @NotNull eu.mikart.tava.data.MutationResult insertResult(@NotNull String entity, @NotNull EntityRecord record) {
+            try { insert(entity, record); return eu.mikart.tava.data.MutationResult.changed(1, eu.mikart.tava.data.MutationResult.Outcome.INSERTED); }
+            catch (TavaException.Conflict conflict) { return new eu.mikart.tava.data.MutationResult(0, 0, 1, eu.mikart.tava.data.MutationResult.Outcome.CONFLICT); }
+        }
+
+        @Override public @NotNull eu.mikart.tava.data.MutationResult updateResult(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
+            long changed = update(entity, predicate, mutation);
+            return new eu.mikart.tava.data.MutationResult(-1, changed, 0,
+                    changed == 0 ? eu.mikart.tava.data.MutationResult.Outcome.UNCHANGED : eu.mikart.tava.data.MutationResult.Outcome.UPDATED);
         }
 
         @Override
@@ -145,7 +180,7 @@ public final class JdbcAdapter implements Adapter {
             int offset = decodeCursor(query.cursor());
             int requested = query.limit() == 0 ? 500 : query.limit();
             sql.append(profile.pagination(requested + 1, offset));
-            try (Connection c = connections.open(); PreparedStatement ps = c.prepareStatement(sql.toString())) {
+            try (Lease lease = lease(); PreparedStatement ps = lease.connection.prepareStatement(sql.toString())) {
                 bind(ps, parameters);
                 try (ResultSet rs = ps.executeQuery()) {
                     List<EntityRecord> records = new ArrayList<>();
@@ -167,13 +202,17 @@ public final class JdbcAdapter implements Adapter {
 
         @Override
         public long update(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
-            if (mutation.values().isEmpty()) return 0;
+            if (mutation.values().isEmpty() && mutation.operations().isEmpty()) return 0;
             List<Object> parameters = new ArrayList<>(mutation.values().values());
             StringBuilder sql = new StringBuilder("UPDATE ").append(profile.quote(entity)).append(" SET ");
-            sql.append(mutation.values().keySet().stream().map(field -> profile.quote(field) + " = ?")
-                    .collect(java.util.stream.Collectors.joining(", ")));
+            List<String> assignments = new ArrayList<>(mutation.values().keySet().stream().map(field -> profile.quote(field) + " = ?").toList());
+            mutation.operations().forEach((field, operation) -> {
+                if (operation.kind() != Mutation.Kind.INCREMENT) throw new TavaException.Capability("JDBC only supports INCREMENT database-side mutations");
+                assignments.add(profile.quote(field) + " = " + profile.quote(field) + " + ?"); parameters.add(operation.value());
+            });
+            sql.append(String.join(", ", assignments));
             appendWhere(sql, parameters, predicate);
-            try (Connection c = connections.open(); PreparedStatement ps = c.prepareStatement(sql.toString())) {
+            try (Lease lease = lease(); PreparedStatement ps = lease.connection.prepareStatement(sql.toString())) {
                 bind(ps, parameters);
                 return ps.executeUpdate();
             } catch (SQLException e) {
@@ -186,13 +225,31 @@ public final class JdbcAdapter implements Adapter {
             List<Object> parameters = new ArrayList<>();
             StringBuilder sql = new StringBuilder("DELETE FROM ").append(profile.quote(entity));
             appendWhere(sql, parameters, predicate);
-            try (Connection c = connections.open(); PreparedStatement ps = c.prepareStatement(sql.toString())) {
+            try (Lease lease = lease(); PreparedStatement ps = lease.connection.prepareStatement(sql.toString())) {
                 bind(ps, parameters);
                 return ps.executeUpdate();
             } catch (SQLException e) {
                 throw data("Delete from " + entity, e);
             }
         }
+
+        @Override public @NotNull eu.mikart.tava.data.MutationResult upsert(@NotNull String entity, @NotNull Predicate identity, @NotNull EntityRecord insert, @NotNull Mutation update) {
+            if (transaction == null) return transactions().transaction(store -> store.upsert(entity, identity, insert, update));
+            long changed = update(entity, identity, update);
+            if (changed > 0) return eu.mikart.tava.data.MutationResult.changed(changed, eu.mikart.tava.data.MutationResult.Outcome.UPDATED);
+            try { insert(entity, insert); return eu.mikart.tava.data.MutationResult.changed(1, eu.mikart.tava.data.MutationResult.Outcome.INSERTED); }
+            catch (TavaException conflict) {
+                changed = update(entity, identity, update);
+                if (changed > 0) return new eu.mikart.tava.data.MutationResult(changed, changed, 1, eu.mikart.tava.data.MutationResult.Outcome.UPDATED);
+                throw conflict;
+            }
+        }
+    }
+
+    private static final class Lease implements AutoCloseable {
+        private final Connection connection; private final boolean owned;
+        private Lease(Connection connection, boolean owned) { this.connection = connection; this.owned = owned; }
+        @Override public void close() throws SQLException { if (owned) connection.close(); }
     }
 
     private final class JdbcSchemas implements SchemaManager {
@@ -410,7 +467,11 @@ public final class JdbcAdapter implements Adapter {
                 .encodeToString(Integer.toString(offset).getBytes(StandardCharsets.UTF_8));
     }
 
-    private static TavaException.Data data(String action, SQLException cause) {
-        return new TavaException.Data(action + " failed: " + cause.getMessage(), cause);
+    private static TavaException data(String action, SQLException cause) {
+        String message = action + " failed: " + cause.getMessage();
+        String state = cause.getSQLState();
+        if (state != null && state.startsWith("23")) return new TavaException.Conflict(message, cause);
+        if (state != null && state.startsWith("08")) return new TavaException.Connection(message, cause);
+        return new TavaException.Data(message, cause);
     }
 }
