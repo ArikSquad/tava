@@ -78,6 +78,9 @@ Predicate named = Predicate.or(
 | `startsWith(field, value)` | Prefix matching |
 | `and(...)`, `or(...)` | Junctions |
 
+`in(...)`, `and(...)`, and `or(...)` require at least one value or predicate. This
+keeps their meaning portable and prevents adapters from producing invalid native queries.
+
 ## Sorting, Projection, And Limits
 
 ```java title="QueryBuilder.java"
@@ -116,6 +119,9 @@ do {
     cursor = page.nextCursor();
 } while (cursor != null);
 ```
+
+Treat cursors as opaque values. A well-behaved adapter returns a different cursor for
+the next page, or `null` when paging is complete.
 
 ## Updates And Deletes
 

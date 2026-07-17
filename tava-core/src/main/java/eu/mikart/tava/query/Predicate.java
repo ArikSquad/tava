@@ -18,6 +18,9 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
 
     record Junction(boolean and, @NotNull List<Predicate> predicates) implements Predicate {
         public Junction {
+            if (predicates == null || predicates.isEmpty()) {
+                throw new IllegalArgumentException("junction requires at least one predicate");
+            }
             predicates = List.copyOf(predicates);
         }
     }
@@ -63,6 +66,9 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
     }
 
     static @NotNull Predicate in(final @NotNull String field, final @NotNull java.util.Collection<?> values) {
+        if (values == null || values.isEmpty()) {
+            throw new IllegalArgumentException("IN requires at least one value");
+        }
         return new Comparison(field, Operator.IN, List.copyOf(values));
     }
 

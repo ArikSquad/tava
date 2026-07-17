@@ -100,6 +100,8 @@ report.issues().forEach(issue ->
 
 If an insert fails, copying stops and the report is returned with `complete() == false`.
 Counts include the records successfully inserted before the failure.
+The transfer also stops with an error issue if a source adapter repeats any cursor, which
+prevents a broken paging implementation from causing an infinite loop or duplicate copy.
 
 <Callout type="warn" title="Transfers are application work">
 Tava handles paging and target inserts, but it does not replace backup, restore, CDC,
