@@ -8,6 +8,10 @@ document, and key-value databases.
 Import `tava-bom` and add only the adapters required by the application:
 
 ```kotlin
+repositories {
+    maven("https://repo.codemc.io/repository/ArikSquad/")
+}
+
 dependencies {
     implementation(platform("eu.mikart.tava:tava-bom:1.2.0"))
     implementation("eu.mikart.tava:tava-core")
