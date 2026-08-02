@@ -22,7 +22,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class DynamoDbContainerTest extends AdapterContractTest {
     @Container
     static final LocalStackContainer LOCALSTACK =

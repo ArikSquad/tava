@@ -19,7 +19,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class PostgresContainerTest extends AdapterContractTest {
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");

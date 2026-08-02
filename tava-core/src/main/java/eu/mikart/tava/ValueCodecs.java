@@ -58,7 +58,14 @@ public final class ValueCodecs {
         if (value instanceof String || value instanceof Character || value instanceof UUID || value instanceof Enum<?>) {
             quote(out, value instanceof Enum<?> e ? e.name() : value.toString()); return;
         }
-        if (value instanceof Boolean || value instanceof Number) { out.append(value); return; }
+        if (value instanceof Boolean) { out.append(value); return; }
+        if (value instanceof Number number) {
+            if (number instanceof Double doubleValue && !Double.isFinite(doubleValue)
+                    || number instanceof Float floatValue && !Float.isFinite(floatValue)) {
+                throw new TavaException.Mapping("JSON does not support non-finite numbers", null);
+            }
+            out.append(number); return;
+        }
         if (value instanceof Map<?, ?> map) {
             out.append('{'); boolean first = true;
             for (var entry : map.entrySet()) {
@@ -116,7 +123,10 @@ public final class ValueCodecs {
             offset++; StringBuilder result = new StringBuilder();
             while (offset < text.length()) {
                 char c = text.charAt(offset++); if (c == '"') return result.toString();
-                if (c != '\\') { result.append(c); continue; }
+                if (c != '\\') {
+                    if (c < 0x20) fail();
+                    result.append(c); continue;
+                }
                 if (offset >= text.length()) fail(); char escape = text.charAt(offset++);
                 result.append(switch (escape) {
                     case '"', '\\', '/' -> escape; case 'b' -> '\b'; case 'f' -> '\f'; case 'n' -> '\n'; case 'r' -> '\r'; case 't' -> '\t';
@@ -128,9 +138,25 @@ public final class ValueCodecs {
         }
         private Object number() {
             int start = offset; if (take('-')) { }
-            while (offset < text.length() && Character.isDigit(text.charAt(offset))) offset++;
-            if (take('.')) while (offset < text.length() && Character.isDigit(text.charAt(offset))) offset++;
-            if (offset < text.length() && (text.charAt(offset) == 'e' || text.charAt(offset) == 'E')) { offset++; if (offset < text.length() && (text.charAt(offset) == '+' || text.charAt(offset) == '-')) offset++; while (offset < text.length() && Character.isDigit(text.charAt(offset))) offset++; }
+            if (take('0')) {
+                if (offset < text.length() && Character.isDigit(text.charAt(offset))) return fail();
+            } else {
+                int integerStart = offset;
+                while (offset < text.length() && Character.isDigit(text.charAt(offset))) offset++;
+                if (integerStart == offset) return fail();
+            }
+            if (take('.')) {
+                int fractionStart = offset;
+                while (offset < text.length() && Character.isDigit(text.charAt(offset))) offset++;
+                if (fractionStart == offset) return fail();
+            }
+            if (offset < text.length() && (text.charAt(offset) == 'e' || text.charAt(offset) == 'E')) {
+                offset++;
+                if (offset < text.length() && (text.charAt(offset) == '+' || text.charAt(offset) == '-')) offset++;
+                int exponentStart = offset;
+                while (offset < text.length() && Character.isDigit(text.charAt(offset))) offset++;
+                if (exponentStart == offset) return fail();
+            }
             if (start == offset) return fail();
             try { BigDecimal value = new BigDecimal(text.substring(start, offset)); return value.scale() <= 0 && value.precision() < 19 ? value.longValueExact() : value; }
             catch (ArithmeticException | NumberFormatException e) { return fail(); }

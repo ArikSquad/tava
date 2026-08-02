@@ -15,7 +15,7 @@ import org.testcontainers.mysql.MySQLContainer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class MySqlContainerTest extends AdapterContractTest {
     @Container
     static final MySQLContainer MYSQL = new MySQLContainer("mysql:9.2");
