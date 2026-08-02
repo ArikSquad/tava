@@ -56,5 +56,17 @@ public final class SqlServer {
         public @NotNull String defaultPaginationOrder() {
             return " ORDER BY (SELECT NULL)";
         }
+
+        @Override
+        public @NotNull String renameEntity(@NotNull String from, @NotNull String to) {
+            quote(from); quote(to);
+            return "EXEC sp_rename N'" + from + "', N'" + to + "'";
+        }
+
+        @Override
+        public @NotNull String renameField(@NotNull String entity, @NotNull String from, @NotNull String to) {
+            quote(entity); quote(from); quote(to);
+            return "EXEC sp_rename N'" + entity + "." + from + "', N'" + to + "', 'COLUMN'";
+        }
     }
 }

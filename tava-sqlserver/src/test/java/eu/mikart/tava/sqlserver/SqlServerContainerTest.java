@@ -17,7 +17,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class SqlServerContainerTest extends AdapterContractTest {
     @Container
     static final MSSQLServerContainer SQL_SERVER =

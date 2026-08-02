@@ -85,8 +85,28 @@ final class DynamoDbAdapter implements Adapter {
     private final class Store implements EntityStore {
         @Override
         public @NotNull EntityRecord insert(@NotNull String entity, @NotNull EntityRecord record) {
-            client.putItem(PutItemRequest.builder().tableName(entity).item(encode(record.values())).build());
+            PutItemRequest.Builder request = PutItemRequest.builder().tableName(entity).item(encode(record.values()));
+            EntityDefinition definition = definitions.get(entity);
+            if (definition != null) request.conditionExpression("attribute_not_exists(#pk)")
+                    .expressionAttributeNames(Map.of("#pk", partitionKey(definition).name()));
+            client.putItem(request.build());
             return record;
+        }
+
+        @Override
+        public @NotNull eu.mikart.tava.data.MutationResult insertResult(@NotNull String entity,
+                                                                        @NotNull EntityRecord record) {
+            try {
+                insert(entity, record);
+                return eu.mikart.tava.data.MutationResult.changed(1, eu.mikart.tava.data.MutationResult.Outcome.INSERTED);
+            } catch (ConditionalCheckFailedException failure) {
+                return new eu.mikart.tava.data.MutationResult(0, 0, 1,
+                        eu.mikart.tava.data.MutationResult.Outcome.CONFLICT,
+                        List.of(new eu.mikart.tava.data.ConflictDetail(
+                                eu.mikart.tava.data.ConflictDetail.Kind.UNIQUE, null,
+                                failure.awsErrorDetails() == null ? null : failure.awsErrorDetails().errorCode(),
+                                failure.getMessage())));
+            }
         }
 
         @Override
@@ -116,7 +136,7 @@ final class DynamoDbAdapter implements Adapter {
 
         @Override
         public long update(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
-            if (mutation.values().isEmpty()) return 0;
+            if (mutation.values().isEmpty() && mutation.operations().isEmpty()) return 0;
             Map<String, AttributeValue> key = key(entity, predicate);
             Map<String, String> names = new HashMap<>();
             Map<String, AttributeValue> values = new HashMap<>();
@@ -128,10 +148,27 @@ final class DynamoDbAdapter implements Adapter {
                 updates.add("#u" + i + " = :u" + i);
                 i++;
             }
+            for (var entry : mutation.operations().entrySet()) {
+                if (entry.getValue().kind() != Mutation.Kind.INCREMENT) throw new TavaException.Capability("DynamoDB currently supports INCREMENT database-side mutations");
+                names.put("#u" + i, entry.getKey()); values.put(":u" + i, encode(entry.getValue().value()));
+                values.put(":zero" + i, encode(0)); updates.add("#u" + i + " = if_not_exists(#u" + i + ", :zero" + i + ") + :u" + i); i++;
+            }
             client.updateItem(UpdateItemRequest.builder().tableName(entity).key(key)
                     .updateExpression("SET " + String.join(", ", updates))
                     .expressionAttributeNames(names).expressionAttributeValues(values).build());
             return 1;
+        }
+
+        @Override public @NotNull eu.mikart.tava.data.MutationResult upsert(@NotNull String entity, @NotNull Predicate identity, @NotNull EntityRecord insert, @NotNull Mutation update) {
+            Map<String, AttributeValue> key = key(entity, identity);
+            Map<String, Object> merged = new LinkedHashMap<>(insert.values()); merged.putAll(update.values()); key.keySet().forEach(merged::remove);
+            Map<String, String> names = new LinkedHashMap<>(); Map<String, AttributeValue> values = new LinkedHashMap<>(); List<String> sets = new ArrayList<>();
+            int i = 0; for (var entry : merged.entrySet()) { names.put("#u" + i, entry.getKey()); values.put(":u" + i, encode(entry.getValue())); sets.add("#u" + i + " = :u" + i); i++; }
+            UpdateItemResponse response = client.updateItem(UpdateItemRequest.builder().tableName(entity).key(key)
+                    .updateExpression("SET " + String.join(", ", sets)).expressionAttributeNames(names).expressionAttributeValues(values)
+                    .returnValues(ReturnValue.ALL_OLD).build());
+            boolean inserted = response.attributes().isEmpty();
+            return eu.mikart.tava.data.MutationResult.changed(1, inserted ? eu.mikart.tava.data.MutationResult.Outcome.INSERTED : eu.mikart.tava.data.MutationResult.Outcome.UPDATED);
         }
 
         @Override
@@ -178,12 +215,17 @@ final class DynamoDbAdapter implements Adapter {
 
     private void create(EntityDefinition entity) {
         FieldDefinition partition = partitionKey(entity);
+        FieldDefinition sort = sortKey(entity);
+        List<AttributeDefinition> attributes = new ArrayList<>();
+        attributes.add(AttributeDefinition.builder().attributeName(partition.name()).attributeType(scalarType(partition)).build());
+        List<KeySchemaElement> keys = new ArrayList<>();
+        keys.add(KeySchemaElement.builder().attributeName(partition.name()).keyType(KeyType.HASH).build());
+        if (sort != null) { attributes.add(AttributeDefinition.builder().attributeName(sort.name()).attributeType(scalarType(sort)).build()); keys.add(KeySchemaElement.builder().attributeName(sort.name()).keyType(KeyType.RANGE).build()); }
         CreateTableRequest request = CreateTableRequest.builder()
                 .tableName(entity.name())
                 .billingMode(BillingMode.PAY_PER_REQUEST)
-                .attributeDefinitions(AttributeDefinition.builder().attributeName(partition.name())
-                        .attributeType(scalarType(partition)).build())
-                .keySchema(KeySchemaElement.builder().attributeName(partition.name()).keyType(KeyType.HASH).build())
+                .attributeDefinitions(attributes)
+                .keySchema(keys)
                 .build();
         client.createTable(request);
         try (DynamoDbWaiter waiter = client.waiter()) {
@@ -202,6 +244,13 @@ final class DynamoDbAdapter implements Adapter {
         }
         if (entity.fields().stream().anyMatch(FieldDefinition::unique))
             throw new TavaException.Schema("DynamoDB cannot enforce unique non-key fields");
+        if (entity.fields().stream().filter(FieldDefinition::identity).count() > 2)
+            throw new TavaException.Schema("DynamoDB supports at most partition and sort identity fields");
+    }
+
+    private FieldDefinition sortKey(EntityDefinition entity) {
+        FieldDefinition partition = partitionKey(entity);
+        return entity.fields().stream().filter(FieldDefinition::identity).filter(field -> !field.name().equals(partition.name())).findFirst().orElse(null);
     }
 
     private FieldDefinition partitionKey(EntityDefinition entity) {
@@ -224,12 +273,17 @@ final class DynamoDbAdapter implements Adapter {
         EntityDefinition definition = definitions.get(entity);
         if (definition == null)
             throw new TavaException.Schema("Apply or inspect schema before keyed writes to " + entity);
-        String key = partitionKey(definition).name();
-        if (predicate instanceof Predicate.Comparison value
-                && value.operator() == Predicate.Operator.EQ && value.field().equals(key)) {
-            return Map.of(key, encode(value.value()));
-        }
-        throw new TavaException.Capability("DynamoDB update/delete requires equality on partition key " + key);
+        Set<String> required = new LinkedHashSet<>(); required.add(partitionKey(definition).name());
+        if (sortKey(definition) != null) required.add(sortKey(definition).name());
+        Map<String, AttributeValue> result = new LinkedHashMap<>();
+        collectKey(predicate, required, result);
+        if (result.keySet().equals(required)) return result;
+        throw new TavaException.Capability("DynamoDB keyed write requires equality on " + required);
+    }
+
+    private void collectKey(Predicate predicate, Set<String> required, Map<String, AttributeValue> result) {
+        if (predicate instanceof Predicate.Comparison value && value.operator() == Predicate.Operator.EQ && required.contains(value.field())) result.put(value.field(), encode(value.value()));
+        else if (predicate instanceof Predicate.Junction junction && junction.and()) junction.predicates().forEach(child -> collectKey(child, required, result));
     }
 
     private record Expression(String text, Map<String, String> names, Map<String, AttributeValue> values) {

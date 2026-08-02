@@ -1,4 +1,4 @@
-# Tava 1.0
+# Tava 1.2
 
 Tava is a modular Java 21 database toolkit with one canonical entity model across relational,
 document, and key-value databases.
@@ -9,7 +9,7 @@ Import `tava-bom` and add only the adapters required by the application:
 
 ```kotlin
 dependencies {
-    implementation(platform("eu.mikart.tava:tava-bom:1.0.0"))
+    implementation(platform("eu.mikart.tava:tava-bom:1.2.0"))
     implementation("eu.mikart.tava:tava-core")
     implementation("eu.mikart.tava:tava-postgres")
     implementation("eu.mikart.tava:tava-mongodb")
@@ -93,3 +93,15 @@ tava.nativeAccess().withNative(Connection.class, connection -> {
 
 The public API consistently uses entities, fields, and records. SQL-specific table/column
 terminology is confined to JDBC adapter internals.
+
+## Atomic writes and transactions
+
+Tava 1.2 adds atomic typed `upsert`, insert-if-absent results with portable conflict
+details, database-side increments and collection mutations, concise `findOne`, and
+callback transactions for JDBC and MongoDB. Typed entities may target a runtime table or
+collection name with `tava.entity(name, RecordType.class)`.
+
+SQLite connections can configure foreign keys, synchronous mode, journal mode, and busy
+timeouts through `SqliteOptions`; `Sqlite.backup(...)` creates a consistent flat-file
+snapshot. Schema adoption can explicitly rename existing JDBC entities and fields with
+`SchemaRenames`.

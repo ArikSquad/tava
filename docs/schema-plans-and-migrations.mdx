@@ -36,6 +36,25 @@ plan.apply(new ApplyOptions(true, false));  // allow lossy
 plan.apply(new ApplyOptions(true, true));   // allow lossy and destructive
 ```
 
+## Adopt Renamed JDBC Schemas
+
+When an existing table or column already represents the desired model under an older
+name, supply explicit old-to-new mappings. This prevents the planner from creating a
+second table or column:
+
+```java
+SchemaRenames renames = SchemaRenames.builder()
+        .entity("player", "players")
+        .field("players", "emblems_csv", "emblems")
+        .build();
+
+SchemaPlan plan = tava.plan(desiredSchema, renames);
+plan.apply();
+```
+
+Field mappings use the final entity name. Rename mappings are currently implemented by
+JDBC adapters; unsupported adapters reject non-empty mappings explicitly.
+
 <Callout type="warn" title="Loss is explicit">
 The default path is safe. If a change can discard data or remove storage, the caller
 has to say so in code.

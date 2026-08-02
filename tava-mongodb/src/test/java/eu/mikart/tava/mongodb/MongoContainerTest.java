@@ -17,7 +17,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class MongoContainerTest extends AdapterContractTest {
     @Container
     static final MongoDBContainer MONGO = new MongoDBContainer("mongo:7.0");

@@ -25,6 +25,8 @@ Account saved = accounts.insert(new Account(
         null
 ));
 
+Optional<Account> found = accounts.findOne(Predicate.eq("email", saved.email()));
+
 var page = accounts.find(Query.builder()
         .where(Predicate.eq("email", saved.email()))
         .limit(1)
@@ -33,6 +35,16 @@ var page = accounts.find(Query.builder()
 
 `Entity<T>` maps between the record type and `EntityRecord` internally. Insert calls
 return the stored record, which is useful when the backend generates fields.
+
+Pass a name separately when the same record schema is used for tenant, shard, archive,
+or version-specific storage:
+
+```java
+Entity<Account> archived = tava.entity("accounts_2025", Account.class);
+```
+
+The record annotations still define fields and mapping; only the target entity name is
+overridden.
 
 ## Dynamic Records
 
@@ -78,6 +90,9 @@ Predicate named = Predicate.or(
 | `startsWith(field, value)` | Prefix matching |
 | `and(...)`, `or(...)` | Junctions |
 
+`in(...)`, `and(...)`, and `or(...)` require at least one value or predicate. This
+keeps their meaning portable and prevents adapters from producing invalid native queries.
+
 ## Sorting, Projection, And Limits
 
 ```java title="QueryBuilder.java"
@@ -117,6 +132,9 @@ do {
 } while (cursor != null);
 ```
 
+Treat cursors as opaque values. A well-behaved adapter returns a different cursor for
+the next page, or `null` when paging is complete.
+
 ## Updates And Deletes
 
 Updates use `Mutation`. Deletes use a predicate directly.
@@ -136,3 +154,79 @@ long deleted = accounts.delete(Predicate.eq("status", "disabled"));
 `update` and `delete` operate on every record matched by the predicate. Build admin
 workflows so broad predicates are deliberate and visible.
 </Callout>
+
+## Identities and upserts
+
+`@Identity` drives typed ID operations. A record may have one identity field or a
+composite identity made from several fields.
+
+```java
+var account = accounts.findById(accountId);       // Optional<Account>
+boolean present = accounts.existsById(accountId);
+MutationResult result = accounts.updateById(accountId, mutation);
+accounts.deleteById(accountId);
+
+// Named values make composite keys unambiguous.
+var key = Identity.of(Map.of("userId", userId, "emblemId", emblemId));
+tava.records("unlocked_emblems").findById(key);
+```
+
+`upsert(record)` is one logical atomic operation. MongoDB uses a native upsert;
+JDBC adapters execute it within one transaction and retry the update if a concurrent
+insert wins. `MutationResult` reports matched rows, changed rows, conflicts, and an
+`INSERTED`, `UPDATED`, `DELETED`, `UNCHANGED`, or `CONFLICT` outcome.
+
+Use `insertIfAbsent(record)` when an existing unique key is expected rather than
+exceptional. A conflict result contains portable `ConflictDetail` entries (kind,
+constraint when known, backend code, and message), so callers do not need to inspect a
+driver exception.
+
+## Type-safe fields and atomic mutations
+
+Expose field references beside application records (or generate them in your model
+generator) and use them in predicates and mutations:
+
+```java
+static final FieldRef<Integer> SCORE = FieldRef.of("score", Integer.class);
+static final FieldRef<Collection<UUID>> EMBLEMS = FieldRef.of("emblems", (Class) Collection.class);
+
+Mutation mutation = Mutation.builder()
+        .increment(SCORE, 1)
+        .appendIfAbsent(EMBLEMS, emblemId)
+        .build();
+```
+
+`increment`, `appendIfAbsent`, and `remove` are database-side operations. MongoDB maps
+collection additions to `$addToSet`; SQLite uses JSON operations. Unsupported
+operators throw `TavaException.Capability`; they never silently fall back to a
+read-modify-write sequence.
+
+## Transactions and asynchronous calls
+
+Callback transactions commit when the callback returns and roll back when it throws.
+They are implemented by JDBC and MongoDB adapters:
+
+```java
+tava.transaction(tx -> {
+    tx.entity(Account.class).updateById(id, mutation);
+    tx.entity(AuditEvent.class).insert(event);
+    return null;
+});
+```
+
+Synchronous I/O entry points carry `@Blocking`. Async methods such as
+`findByIdAsync`, `insertAsync`, and `upsertAsync` use the executor supplied to
+`Tava.open(adapter, executor)`. Server and game applications should provide a
+dedicated database executor rather than use their main/event-loop thread.
+
+## Value mapping and errors
+
+UUID, enum, `Instant`, `OffsetDateTime`, `LocalDate`, and `LocalDateTime` values map
+natively. Typed enum collections are recursively converted as well; JDBC stores
+collections and maps as JSON while document adapters retain native collection values.
+`ValueCodecs.enumName(...)`, `list(...)`, and `set(...)` are available for reusable
+custom mappings. Nested records map as embedded documents. Add
+`@MappedWith(MyCodec.class)` to a component for custom encoding. All public failures derive from `TavaException`;
+the `Capability`, `Schema`, `Mapping`, `Data`, `Conflict`, `Connection`, and
+`Transaction` subtypes let applications handle failures consistently without
+depending on `SQLException`.

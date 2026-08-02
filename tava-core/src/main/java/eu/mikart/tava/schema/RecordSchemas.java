@@ -46,6 +46,7 @@ public final class RecordSchemas {
     private static @NotNull FieldType typeOf(final @NotNull Class<?> type, final @Nullable Field field) {
         if (type == String.class) return field != null && field.length() > 0
             ? FieldType.string(field.length()) : FieldType.of(LogicalType.TEXT);
+        if (type.isEnum()) return FieldType.of(LogicalType.STRING);
         if (type == int.class || type == Integer.class || type == short.class || type == Short.class)
             return FieldType.of(LogicalType.INT32);
         if (type == long.class || type == Long.class) return FieldType.of(LogicalType.INT64);
@@ -61,7 +62,7 @@ public final class RecordSchemas {
             }
             return FieldType.decimal(field.precision(), Math.max(field.scale(), 0));
         }
-        if (Map.class.isAssignableFrom(type) || Collection.class.isAssignableFrom(type))
+        if (Map.class.isAssignableFrom(type) || Collection.class.isAssignableFrom(type) || type.isRecord())
             return FieldType.of(LogicalType.JSON);
         throw new IllegalArgumentException("Unsupported record field type " + type.getTypeName());
     }
