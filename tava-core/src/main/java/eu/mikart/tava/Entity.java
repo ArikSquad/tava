@@ -36,32 +36,36 @@ public final class Entity<T extends Record> {
     }
 
     @Blocking public @NotNull Page<T> find(final @NotNull Query query) {
-        final var page = store.find(name, query);
+        final var page = store.find(name, mapper.write(query));
         return new Page<>(page.items().stream().map(mapper::read).toList(), page.nextCursor());
     }
 
+    @Blocking public @NotNull Optional<T> findOne(final @NotNull Predicate predicate) {
+        return find(Query.builder().where(predicate).limit(1).build()).items().stream().findFirst();
+    }
+
     @Blocking public long update(final @NotNull Predicate predicate, final @NotNull Mutation mutation) {
-        return store.update(name, predicate, mutation);
+        return store.update(name, mapper.write(predicate), mapper.write(mutation));
     }
 
     @Blocking public long delete(final @NotNull Predicate predicate) {
-        return store.delete(name, predicate);
+        return store.delete(name, mapper.write(predicate));
     }
 
     @Blocking public @NotNull Optional<T> findById(final @NotNull Object id) { return findById(mapper.identity(id)); }
-    @Blocking public @NotNull Optional<T> findById(final @NotNull Identity id) {
-        return find(Query.builder().where(id.predicate()).limit(1).build()).items().stream().findFirst();
-    }
+    @Blocking public @NotNull Optional<T> findById(final @NotNull Identity id) { return findOne(id.predicate()); }
     @Blocking public boolean existsById(final @NotNull Object id) { return findById(id).isPresent(); }
     @Blocking public boolean existsById(final @NotNull Identity id) { return findById(id).isPresent(); }
     @Blocking public @NotNull MutationResult updateById(final @NotNull Object id, final @NotNull Mutation mutation) { return updateById(mapper.identity(id), mutation); }
-    @Blocking public @NotNull MutationResult updateById(final @NotNull Identity id, final @NotNull Mutation mutation) { return store.updateResult(name, id.predicate(), mutation); }
+    @Blocking public @NotNull MutationResult updateById(final @NotNull Identity id, final @NotNull Mutation mutation) { return store.updateResult(name, mapper.write(id.predicate()), mapper.write(mutation)); }
     @Blocking public @NotNull MutationResult deleteById(final @NotNull Object id) { return deleteById(mapper.identity(id)); }
-    @Blocking public @NotNull MutationResult deleteById(final @NotNull Identity id) { return store.deleteResult(name, id.predicate()); }
+    @Blocking public @NotNull MutationResult deleteById(final @NotNull Identity id) { return store.deleteResult(name, mapper.write(id.predicate())); }
     @Blocking public @NotNull MutationResult insertResult(final @NotNull T record) { return store.insertResult(name, mapper.write(record)); }
-    @Blocking public @NotNull MutationResult updateResult(final @NotNull Predicate predicate, final @NotNull Mutation mutation) { return store.updateResult(name, predicate, mutation); }
+    /** Attempts one insert and reports a conflict instead of throwing for an existing unique key. */
+    @Blocking public @NotNull MutationResult insertIfAbsent(final @NotNull T record) { return insertResult(record); }
+    @Blocking public @NotNull MutationResult updateResult(final @NotNull Predicate predicate, final @NotNull Mutation mutation) { return store.updateResult(name, mapper.write(predicate), mapper.write(mutation)); }
     @Blocking public @NotNull MutationResult upsert(final @NotNull T record) {
-        return store.upsert(name, mapper.identity(record).predicate(), mapper.write(record), mapper.update(record));
+        return store.upsert(name, mapper.write(mapper.identity(record).predicate()), mapper.write(record), mapper.update(record));
     }
     public @NotNull CompletableFuture<Optional<T>> findByIdAsync(final @NotNull Object id) { return CompletableFuture.supplyAsync(() -> findById(id), executor); }
     public @NotNull CompletableFuture<T> insertAsync(final @NotNull T record) { return CompletableFuture.supplyAsync(() -> insert(record), executor); }

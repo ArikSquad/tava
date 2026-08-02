@@ -85,8 +85,28 @@ final class DynamoDbAdapter implements Adapter {
     private final class Store implements EntityStore {
         @Override
         public @NotNull EntityRecord insert(@NotNull String entity, @NotNull EntityRecord record) {
-            client.putItem(PutItemRequest.builder().tableName(entity).item(encode(record.values())).build());
+            PutItemRequest.Builder request = PutItemRequest.builder().tableName(entity).item(encode(record.values()));
+            EntityDefinition definition = definitions.get(entity);
+            if (definition != null) request.conditionExpression("attribute_not_exists(#pk)")
+                    .expressionAttributeNames(Map.of("#pk", partitionKey(definition).name()));
+            client.putItem(request.build());
             return record;
+        }
+
+        @Override
+        public @NotNull eu.mikart.tava.data.MutationResult insertResult(@NotNull String entity,
+                                                                        @NotNull EntityRecord record) {
+            try {
+                insert(entity, record);
+                return eu.mikart.tava.data.MutationResult.changed(1, eu.mikart.tava.data.MutationResult.Outcome.INSERTED);
+            } catch (ConditionalCheckFailedException failure) {
+                return new eu.mikart.tava.data.MutationResult(0, 0, 1,
+                        eu.mikart.tava.data.MutationResult.Outcome.CONFLICT,
+                        List.of(new eu.mikart.tava.data.ConflictDetail(
+                                eu.mikart.tava.data.ConflictDetail.Kind.UNIQUE, null,
+                                failure.awsErrorDetails() == null ? null : failure.awsErrorDetails().errorCode(),
+                                failure.getMessage())));
+            }
         }
 
         @Override
@@ -116,7 +136,7 @@ final class DynamoDbAdapter implements Adapter {
 
         @Override
         public long update(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
-            if (mutation.values().isEmpty()) return 0;
+            if (mutation.values().isEmpty() && mutation.operations().isEmpty()) return 0;
             Map<String, AttributeValue> key = key(entity, predicate);
             Map<String, String> names = new HashMap<>();
             Map<String, AttributeValue> values = new HashMap<>();

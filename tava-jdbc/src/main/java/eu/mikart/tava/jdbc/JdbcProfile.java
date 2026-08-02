@@ -2,9 +2,17 @@ package eu.mikart.tava.jdbc;
 
 import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.schema.FieldDefinition;
+import eu.mikart.tava.query.Mutation;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.List;
+import java.sql.SQLException;
 
 public interface JdbcProfile {
+    record MutationExpression(@NotNull String sql, @NotNull List<Object> parameters) {
+        public MutationExpression { parameters = List.copyOf(parameters); }
+    }
     @NotNull String name();
 
     @NotNull String quote(@NotNull String identifier);
@@ -14,6 +22,22 @@ public interface JdbcProfile {
     @NotNull String identityClause(@NotNull FieldDefinition field);
 
     boolean supportsIfNotExists();
+
+    /** Returns a backend-specific atomic collection expression, or null when unsupported. */
+    default @Nullable MutationExpression collectionMutation(@NotNull String quotedField,
+                                                             @NotNull Mutation.Operation operation) {
+        return null;
+    }
+
+    default @NotNull String renameEntity(@NotNull String from, @NotNull String to) {
+        return "ALTER TABLE " + quote(from) + " RENAME TO " + quote(to);
+    }
+
+    default @NotNull String renameField(@NotNull String entity, @NotNull String from, @NotNull String to) {
+        return "ALTER TABLE " + quote(entity) + " RENAME COLUMN " + quote(from) + " TO " + quote(to);
+    }
+
+    default boolean retryableWrite(@NotNull SQLException failure) { return false; }
 
     default @NotNull String pagination(final int limit, final int offset) {
         return " LIMIT " + limit + " OFFSET " + offset;

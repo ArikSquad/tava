@@ -3,6 +3,8 @@ package eu.mikart.tava.jdbc;
 import eu.mikart.tava.TavaException;
 import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.data.ConflictDetail;
+import eu.mikart.tava.ValueCodecs;
 import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
@@ -88,7 +90,7 @@ public final class JdbcAdapter implements Adapter {
                         R result = callback.apply(new JdbcStore(connection));
                         connection.commit();
                         return result;
-                    } catch (Throwable failure) {
+                    } catch (RuntimeException | Error failure) {
                         try { connection.rollback(); } catch (SQLException rollback) { failure.addSuppressed(rollback); }
                         throw failure;
                     } finally { connection.setAutoCommit(autoCommit); }
@@ -152,8 +154,19 @@ public final class JdbcAdapter implements Adapter {
         }
 
         @Override public @NotNull eu.mikart.tava.data.MutationResult insertResult(@NotNull String entity, @NotNull EntityRecord record) {
-            try { insert(entity, record); return eu.mikart.tava.data.MutationResult.changed(1, eu.mikart.tava.data.MutationResult.Outcome.INSERTED); }
-            catch (TavaException.Conflict conflict) { return new eu.mikart.tava.data.MutationResult(0, 0, 1, eu.mikart.tava.data.MutationResult.Outcome.CONFLICT); }
+            if (record.values().isEmpty()) throw new IllegalArgumentException("record has no values");
+            List<String> fields = new ArrayList<>(record.values().keySet());
+            String sql = "INSERT INTO " + profile.quote(entity) + " (" + fields.stream().map(profile::quote)
+                    .collect(java.util.stream.Collectors.joining(", ")) + ") VALUES (" +
+                    String.join(", ", Collections.nCopies(fields.size(), "?")) + ")";
+            try (Lease lease = lease(); PreparedStatement ps = lease.connection.prepareStatement(sql)) {
+                bind(ps, record.values().values()); ps.executeUpdate();
+                return eu.mikart.tava.data.MutationResult.changed(1, eu.mikart.tava.data.MutationResult.Outcome.INSERTED);
+            } catch (SQLException failure) {
+                if (isConflict(failure)) return new eu.mikart.tava.data.MutationResult(0, 0, 1,
+                        eu.mikart.tava.data.MutationResult.Outcome.CONFLICT, List.of(conflictDetail(failure)));
+                throw data("Insert into " + entity, failure);
+            }
         }
 
         @Override public @NotNull eu.mikart.tava.data.MutationResult updateResult(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
@@ -207,8 +220,13 @@ public final class JdbcAdapter implements Adapter {
             StringBuilder sql = new StringBuilder("UPDATE ").append(profile.quote(entity)).append(" SET ");
             List<String> assignments = new ArrayList<>(mutation.values().keySet().stream().map(field -> profile.quote(field) + " = ?").toList());
             mutation.operations().forEach((field, operation) -> {
-                if (operation.kind() != Mutation.Kind.INCREMENT) throw new TavaException.Capability("JDBC only supports INCREMENT database-side mutations");
-                assignments.add(profile.quote(field) + " = " + profile.quote(field) + " + ?"); parameters.add(operation.value());
+                String quoted = profile.quote(field);
+                if (operation.kind() == Mutation.Kind.INCREMENT) {
+                    assignments.add(quoted + " = " + quoted + " + ?"); parameters.add(operation.value()); return;
+                }
+                JdbcProfile.MutationExpression expression = profile.collectionMutation(quoted, operation);
+                if (expression == null) throw new TavaException.Capability(profile.name() + " does not support " + operation.kind() + " database-side mutations");
+                assignments.add(quoted + " = " + expression.sql()); parameters.addAll(expression.parameters());
             });
             sql.append(String.join(", ", assignments));
             appendWhere(sql, parameters, predicate);
@@ -234,14 +252,42 @@ public final class JdbcAdapter implements Adapter {
         }
 
         @Override public @NotNull eu.mikart.tava.data.MutationResult upsert(@NotNull String entity, @NotNull Predicate identity, @NotNull EntityRecord insert, @NotNull Mutation update) {
-            if (transaction == null) return transactions().transaction(store -> store.upsert(entity, identity, insert, update));
+            if (transaction == null) {
+                RuntimeException last = null;
+                for (int attempt = 0; attempt < 8; attempt++) {
+                    try { return transactions().transaction(store -> store.upsert(entity, identity, insert, update)); }
+                    catch (RuntimeException failure) {
+                        SQLException sql = sqlCause(failure);
+                        if (sql == null || !profile.retryableWrite(sql)) throw failure;
+                        last = failure;
+                        java.util.concurrent.locks.LockSupport.parkNanos((attempt + 1L) * 2_000_000L);
+                    }
+                }
+                throw last;
+            }
             long changed = update(entity, identity, update);
             if (changed > 0) return eu.mikart.tava.data.MutationResult.changed(changed, eu.mikart.tava.data.MutationResult.Outcome.UPDATED);
-            try { insert(entity, insert); return eu.mikart.tava.data.MutationResult.changed(1, eu.mikart.tava.data.MutationResult.Outcome.INSERTED); }
-            catch (TavaException conflict) {
+            Savepoint savepoint = null;
+            try {
+                try { savepoint = transaction.setSavepoint(); }
+                catch (SQLException failure) { throw data("Create upsert savepoint", failure); }
+                insert(entity, insert);
+                return eu.mikart.tava.data.MutationResult.changed(1, eu.mikart.tava.data.MutationResult.Outcome.INSERTED);
+            } catch (TavaException.Conflict conflict) {
+                try { if (savepoint != null) transaction.rollback(savepoint); }
+                catch (SQLException failure) { conflict.addSuppressed(failure); throw conflict; }
                 changed = update(entity, identity, update);
-                if (changed > 0) return new eu.mikart.tava.data.MutationResult(changed, changed, 1, eu.mikart.tava.data.MutationResult.Outcome.UPDATED);
+                if (changed > 0) return new eu.mikart.tava.data.MutationResult(changed, changed, 1,
+                        eu.mikart.tava.data.MutationResult.Outcome.UPDATED,
+                        conflict.getCause() instanceof SQLException sql ? List.of(conflictDetail(sql)) : List.of());
+                if (!find(entity, Query.builder().where(identity).limit(1).build()).items().isEmpty())
+                    return new eu.mikart.tava.data.MutationResult(1, 0, 1,
+                            eu.mikart.tava.data.MutationResult.Outcome.UNCHANGED,
+                            conflict.getCause() instanceof SQLException sql ? List.of(conflictDetail(sql)) : List.of());
                 throw conflict;
+            } finally {
+                try { if (savepoint != null) transaction.releaseSavepoint(savepoint); }
+                catch (SQLException ignored) { }
             }
         }
     }
@@ -283,12 +329,47 @@ public final class JdbcAdapter implements Adapter {
 
         @Override
         public @NotNull SchemaPlan plan(@NotNull Schema desired) {
+            return plan(desired, SchemaRenames.none());
+        }
+
+        @Override
+        public @NotNull SchemaPlan plan(@NotNull Schema desired, @NotNull SchemaRenames renames) {
             validate(desired);
             Schema actual = inspect();
-            Map<String, EntityDefinition> existing = new HashMap<>();
-            actual.entities().forEach(entity -> existing.put(entity.name().toLowerCase(Locale.ROOT), entity));
             List<SchemaChange> changes = new ArrayList<>();
             List<String> statements = new ArrayList<>();
+            Map<String, EntityDefinition> existing = new HashMap<>();
+            Set<String> actualNames = actual.entities().stream().map(value -> value.name().toLowerCase(Locale.ROOT))
+                    .collect(java.util.stream.Collectors.toSet());
+            for (EntityDefinition current : actual.entities()) {
+                String finalName = renames.entities().getOrDefault(current.name(), current.name());
+                if (!finalName.equals(current.name())) {
+                    if (actualNames.contains(finalName.toLowerCase(Locale.ROOT)))
+                        throw new TavaException.Schema("Cannot rename entity " + current.name() + " to existing entity " + finalName);
+                    String statement = profile.renameEntity(current.name(), finalName);
+                    statements.add(statement);
+                    changes.add(new SchemaChange("Rename entity " + current.name() + " to " + finalName, ChangeRisk.SAFE, statement));
+                }
+                Map<String, String> fieldRenames = renames.fields().getOrDefault(finalName, Map.of());
+                Set<String> currentFieldNames = current.fields().stream().map(value -> value.name().toLowerCase(Locale.ROOT))
+                        .collect(java.util.stream.Collectors.toSet());
+                List<FieldDefinition> fields = new ArrayList<>();
+                for (FieldDefinition field : current.fields()) {
+                    String finalField = fieldRenames.getOrDefault(field.name(), field.name());
+                    if (!finalField.equals(field.name())) {
+                        if (currentFieldNames.contains(finalField.toLowerCase(Locale.ROOT)))
+                            throw new TavaException.Schema("Cannot rename field " + finalName + "." + field.name()
+                                    + " to existing field " + finalField);
+                        String statement = profile.renameField(finalName, field.name(), finalField);
+                        statements.add(statement);
+                        changes.add(new SchemaChange("Rename field " + finalName + "." + field.name() + " to " + finalField, ChangeRisk.SAFE, statement));
+                    }
+                    fields.add(new FieldDefinition(finalField, field.type(), field.nullable(), field.identity(),
+                            field.unique(), field.generated(), field.settings()));
+                }
+                existing.put(finalName.toLowerCase(Locale.ROOT), new EntityDefinition(finalName, fields,
+                        current.indexes(), current.settings()));
+            }
             for (EntityDefinition entity : desired.entities()) {
                 EntityDefinition current = existing.get(entity.name().toLowerCase(Locale.ROOT));
                 if (current == null) {
@@ -435,6 +516,8 @@ public final class JdbcAdapter implements Adapter {
         int index = 1;
         for (Object value : values) {
             if (value instanceof java.time.Instant instant) statement.setTimestamp(index++, Timestamp.from(instant));
+            else if (value instanceof Collection<?> || value instanceof Map<?, ?>) statement.setString(index++, ValueCodecs.toJson(value));
+            else if (value instanceof Enum<?> enumeration) statement.setString(index++, enumeration.name());
             else statement.setObject(index++, value);
         }
     }
@@ -470,8 +553,31 @@ public final class JdbcAdapter implements Adapter {
     private static TavaException data(String action, SQLException cause) {
         String message = action + " failed: " + cause.getMessage();
         String state = cause.getSQLState();
-        if (state != null && state.startsWith("23")) return new TavaException.Conflict(message, cause);
+        if (isConflict(cause)) return new TavaException.Conflict(message, cause);
         if (state != null && state.startsWith("08")) return new TavaException.Connection(message, cause);
         return new TavaException.Data(message, cause);
+    }
+
+    private static boolean isConflict(SQLException cause) {
+        return (cause.getSQLState() != null && cause.getSQLState().startsWith("23"))
+                || cause.getErrorCode() == 19;
+    }
+
+    private static ConflictDetail conflictDetail(SQLException cause) {
+        String state = cause.getSQLState();
+        ConflictDetail.Kind kind = cause.getErrorCode() == 19 ? ConflictDetail.Kind.UNIQUE : state == null ? ConflictDetail.Kind.UNKNOWN : switch (state) {
+            case "23505", "23000" -> ConflictDetail.Kind.UNIQUE;
+            case "23503" -> ConflictDetail.Kind.FOREIGN_KEY;
+            case "23514" -> ConflictDetail.Kind.CHECK;
+            default -> ConflictDetail.Kind.UNKNOWN;
+        };
+        return new ConflictDetail(kind, null, state == null ? Integer.toString(cause.getErrorCode()) : state,
+                cause.getMessage());
+    }
+
+    private static SQLException sqlCause(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause())
+            if (cause instanceof SQLException sql) return sql;
+        return null;
     }
 }

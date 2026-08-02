@@ -4,6 +4,7 @@ import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.migration.Migrations;
 import eu.mikart.tava.schema.RecordSchemas;
 import eu.mikart.tava.schema.Schema;
+import eu.mikart.tava.schema.SchemaRenames;
 import eu.mikart.tava.schema.plan.SchemaPlan;
 import eu.mikart.tava.spi.Adapter;
 import eu.mikart.tava.spi.NativeAccess;
@@ -60,6 +61,11 @@ public final class Tava implements AutoCloseable {
      */
     public @NotNull SchemaPlan plan(final @NotNull Schema desired) {
         return schema().plan(desired);
+    }
+
+    /** Plans a schema while explicitly mapping existing entity and field names to desired names. */
+    public @NotNull SchemaPlan plan(final @NotNull Schema desired, final @NotNull SchemaRenames renames) {
+        return schema().plan(desired, renames);
     }
 
     public Migrations migrations() {

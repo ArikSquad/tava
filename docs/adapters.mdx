@@ -67,6 +67,26 @@ try (Tava tava = Tava.open(Sqlite.memory("app-tests"))) {
 }
 ```
 
+Configure pragmas once and Tava applies them to every connection:
+
+```java
+SqliteOptions options = SqliteOptions.builder()
+        .foreignKeys(true)
+        .journalMode(SqliteOptions.JournalMode.WAL)
+        .synchronous(SqliteOptions.Synchronous.NORMAL)
+        .busyTimeout(Duration.ofSeconds(5))
+        .build();
+
+try (Tava tava = Tava.open(Sqlite.file(Path.of("app.db"), options))) {
+    // all adapter connections use these settings
+}
+
+Sqlite.backup(Path.of("app.db"), Path.of("backups/app-before-migration.db"), options);
+```
+
+`backup` uses SQLite's online `VACUUM INTO` operation, refuses to overwrite an existing
+target, and is suitable for a pre-migration flat-file snapshot.
+
 ```java tab="H2"
 try (Tava tava = Tava.open(H2.memory("app-tests"))) {
     // in-memory H2

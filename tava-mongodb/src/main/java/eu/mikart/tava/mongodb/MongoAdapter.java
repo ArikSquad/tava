@@ -1,8 +1,11 @@
 package eu.mikart.tava.mongodb;
 
 import com.mongodb.client.MongoClient;
+import com.mongodb.MongoWriteException;
+import com.mongodb.ErrorCategory;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.ClientSession;
 import com.mongodb.client.model.IndexOptions;
 import com.mongodb.client.model.Updates;
 import com.mongodb.client.model.UpdateOptions;
@@ -24,12 +27,13 @@ import org.jetbrains.annotations.NotNull;
 
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.function.Function;
 
 final class MongoAdapter implements Adapter {
     private final MongoClient client;
     private final MongoDatabase database;
     private final boolean owned;
-    private final EntityStore entities = new Store();
+    private final EntityStore entities = new Store(null);
     private final SchemaManager schemas = new Schemas();
 
     MongoAdapter(MongoClient client, String database, boolean owned) {
@@ -68,6 +72,17 @@ final class MongoAdapter implements Adapter {
     }
 
     @Override
+    public @NotNull TransactionManager transactions() {
+        return new TransactionManager() {
+            @Override public <R> R transaction(@NotNull Function<EntityStore, R> callback) {
+                try (ClientSession session = client.startSession()) {
+                    return session.withTransaction(() -> callback.apply(new Store(session)));
+                }
+            }
+        };
+    }
+
+    @Override
     public @NotNull NativeAccess nativeAccess() {
         return new NativeAccess() {
             @Override
@@ -89,16 +104,36 @@ final class MongoAdapter implements Adapter {
     }
 
     private final class Store implements EntityStore {
+        private final ClientSession session;
+        private Store(ClientSession session) { this.session = session; }
+
         @Override
         public @NotNull EntityRecord insert(@NotNull String entity, @NotNull EntityRecord record) {
             Document document = new Document(record.values());
-            collection(entity).insertOne(document);
+            if (session == null) collection(entity).insertOne(document); else collection(entity).insertOne(session, document);
             return EntityRecord.of(document);
         }
 
         @Override
+        public @NotNull eu.mikart.tava.data.MutationResult insertResult(@NotNull String entity,
+                                                                        @NotNull EntityRecord record) {
+            try {
+                insert(entity, record);
+                return eu.mikart.tava.data.MutationResult.changed(1, eu.mikart.tava.data.MutationResult.Outcome.INSERTED);
+            } catch (MongoWriteException failure) {
+                if (ErrorCategory.fromErrorCode(failure.getCode()) != ErrorCategory.DUPLICATE_KEY) throw failure;
+                return new eu.mikart.tava.data.MutationResult(0, 0, 1,
+                        eu.mikart.tava.data.MutationResult.Outcome.CONFLICT,
+                        List.of(new eu.mikart.tava.data.ConflictDetail(
+                                eu.mikart.tava.data.ConflictDetail.Kind.UNIQUE, null,
+                                Integer.toString(failure.getCode()), failure.getError().getMessage())));
+            }
+        }
+
+        @Override
         public @NotNull Page<EntityRecord> find(@NotNull String entity, @NotNull Query query) {
-            var result = collection(entity).find(filter(query.predicate()));
+            var result = session == null ? collection(entity).find(filter(query.predicate()))
+                    : collection(entity).find(session, filter(query.predicate()));
             if (!query.projection().isEmpty()) {
                 Document projection = new Document();
                 query.projection().forEach(field -> projection.append(field, 1));
@@ -126,24 +161,27 @@ final class MongoAdapter implements Adapter {
                     .map(entry -> Updates.set(entry.getKey(), entry.getValue())).map(Bson.class::cast).toList());
             mutation.operations().forEach((field, operation) -> updates.add(switch (operation.kind()) {
                 case INCREMENT -> Updates.inc(field, (Number) operation.value());
-                case APPEND -> Updates.addToSet(field, operation.value());
+                case APPEND_IF_ABSENT, APPEND -> Updates.addToSet(field, operation.value());
                 case REMOVE -> Updates.pull(field, operation.value());
             }));
-            return collection(entity).updateMany(filter(predicate), Updates.combine(updates)).getModifiedCount();
+            return (session == null ? collection(entity).updateMany(filter(predicate), Updates.combine(updates))
+                    : collection(entity).updateMany(session, filter(predicate), Updates.combine(updates))).getModifiedCount();
         }
 
         @Override public @NotNull eu.mikart.tava.data.MutationResult updateResult(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
             if (mutation.values().isEmpty() && mutation.operations().isEmpty()) return new eu.mikart.tava.data.MutationResult(0, 0, 0, eu.mikart.tava.data.MutationResult.Outcome.UNCHANGED);
             List<Bson> updates = new ArrayList<>(); mutation.values().forEach((field, value) -> updates.add(Updates.set(field, value)));
-            mutation.operations().forEach((field, operation) -> updates.add(switch (operation.kind()) { case INCREMENT -> Updates.inc(field, (Number) operation.value()); case APPEND -> Updates.addToSet(field, operation.value()); case REMOVE -> Updates.pull(field, operation.value()); }));
-            var result = collection(entity).updateMany(filter(predicate), Updates.combine(updates));
+            mutation.operations().forEach((field, operation) -> updates.add(switch (operation.kind()) { case INCREMENT -> Updates.inc(field, (Number) operation.value()); case APPEND_IF_ABSENT, APPEND -> Updates.addToSet(field, operation.value()); case REMOVE -> Updates.pull(field, operation.value()); }));
+            var result = session == null ? collection(entity).updateMany(filter(predicate), Updates.combine(updates))
+                    : collection(entity).updateMany(session, filter(predicate), Updates.combine(updates));
             return new eu.mikart.tava.data.MutationResult(result.getMatchedCount(), result.getModifiedCount(), 0,
                     result.getModifiedCount() == 0 ? eu.mikart.tava.data.MutationResult.Outcome.UNCHANGED : eu.mikart.tava.data.MutationResult.Outcome.UPDATED);
         }
 
         @Override
         public long delete(@NotNull String entity, @NotNull Predicate predicate) {
-            return collection(entity).deleteMany(filter(predicate)).getDeletedCount();
+            return (session == null ? collection(entity).deleteMany(filter(predicate))
+                    : collection(entity).deleteMany(session, filter(predicate))).getDeletedCount();
         }
 
         @Override public @NotNull eu.mikart.tava.data.MutationResult upsert(@NotNull String entity, @NotNull Predicate identity, @NotNull EntityRecord insert, @NotNull Mutation update) {
@@ -152,10 +190,12 @@ final class MongoAdapter implements Adapter {
             update.values().forEach((field, value) -> changes.add(Updates.set(field, value)));
             update.operations().forEach((field, operation) -> changes.add(switch (operation.kind()) {
                 case INCREMENT -> Updates.inc(field, (Number) operation.value());
-                case APPEND -> Updates.addToSet(field, operation.value());
+                case APPEND_IF_ABSENT, APPEND -> Updates.addToSet(field, operation.value());
                 case REMOVE -> Updates.pull(field, operation.value());
             }));
-            var result = collection(entity).updateOne(filter(identity), Updates.combine(changes), new UpdateOptions().upsert(true));
+            var options = new UpdateOptions().upsert(true);
+            var result = session == null ? collection(entity).updateOne(filter(identity), Updates.combine(changes), options)
+                    : collection(entity).updateOne(session, filter(identity), Updates.combine(changes), options);
             boolean inserted = result.getUpsertedId() != null;
             return new eu.mikart.tava.data.MutationResult(result.getMatchedCount(), result.getModifiedCount(), 0,
                     inserted ? eu.mikart.tava.data.MutationResult.Outcome.INSERTED : eu.mikart.tava.data.MutationResult.Outcome.UPDATED);

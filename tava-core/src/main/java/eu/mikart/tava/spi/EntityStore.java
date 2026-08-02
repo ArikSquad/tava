@@ -24,7 +24,13 @@ public interface EntityStore {
     long delete(@NotNull String entity, @NotNull Predicate predicate);
 
     default @NotNull MutationResult insertResult(@NotNull String entity, @NotNull EntityRecord record) {
-        insert(entity, record); return MutationResult.changed(1, MutationResult.Outcome.INSERTED);
+        try {
+            insert(entity, record); return MutationResult.changed(1, MutationResult.Outcome.INSERTED);
+        } catch (eu.mikart.tava.TavaException.Conflict conflict) {
+            return new MutationResult(0, 0, 1, MutationResult.Outcome.CONFLICT,
+                    java.util.List.of(new eu.mikart.tava.data.ConflictDetail(
+                            eu.mikart.tava.data.ConflictDetail.Kind.UNKNOWN, null, null, conflict.getMessage())));
+        }
     }
     default @NotNull MutationResult updateResult(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
         return MutationResult.changed(update(entity, predicate, mutation), MutationResult.Outcome.UPDATED);
