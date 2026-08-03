@@ -20,7 +20,7 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: gradle
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@v6.2.0
       - name: Build all modules and run contract tests
         run: ./gradlew clean check javadoc --no-daemon
       - name: Upload test report
