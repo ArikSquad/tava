@@ -24,7 +24,7 @@ public final class SqlServer {
 
         @Override
         public @NotNull String quote(final @NotNull String identifier) {
-            if (identifier == null || !identifier.matches("[A-Za-z_][A-Za-z0-9_]*"))
+            if (!validIdentifier(identifier))
                 throw new IllegalArgumentException("Invalid identifier: " + identifier);
             return "[" + identifier + "]";
         }

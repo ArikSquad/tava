@@ -111,6 +111,17 @@ final class DynamoDbAdapter implements Adapter {
 
         @Override
         public @NotNull Page<EntityRecord> find(@NotNull String entity, @NotNull Query query) {
+            final EntityDefinition definition = definitions.get(entity);
+            if (definition != null) {
+                final String partitionField = partitionKey(definition).name();
+                final FieldDefinition sort = sortKey(definition);
+                final Map<String, Object> keyValues = exactKeyEquality(query.predicate(), partitionField,
+                        sort == null ? null : sort.name());
+                if (keyValues != null && keyValues.get(partitionField) != null
+                        && (sort == null || keyValues.get(sort.name()) != null)) {
+                    return query(entity, query, partitionField, sort == null ? null : sort.name(), keyValues);
+                }
+            }
             Expression expression = expression(query.predicate());
             ScanRequest.Builder request = ScanRequest.builder().tableName(entity)
                     .limit(query.limit() == 0 ? 500 : query.limit());
@@ -120,7 +131,7 @@ final class DynamoDbAdapter implements Adapter {
             }
             if (!query.projection().isEmpty()) {
                 Map<String, String> names = new HashMap<>(expression.names);
-                List<String> projected = new ArrayList<>();
+                List<String> projected = new ArrayList<>(query.projection().size());
                 for (int i = 0; i < query.projection().size(); i++) {
                     String key = "#p" + i;
                     names.put(key, query.projection().get(i));
@@ -130,6 +141,45 @@ final class DynamoDbAdapter implements Adapter {
             }
             if (query.cursor() != null) request.exclusiveStartKey(decodeCursor(query.cursor()));
             ScanResponse response = client.scan(request.build());
+            return new Page<>(response.items().stream().map(this::decode).toList(),
+                    response.lastEvaluatedKey().isEmpty() ? null : encodeCursor(response.lastEvaluatedKey()));
+        }
+
+        private Page<EntityRecord> query(
+                final String entity,
+                final Query query,
+                final String partitionField,
+                final String sortField,
+                final Map<String, Object> keyValues
+        ) {
+            final Map<String, String> names = new LinkedHashMap<>();
+            final Map<String, AttributeValue> values = new LinkedHashMap<>();
+            names.put("#pk", partitionField);
+            values.put(":pk", encode(keyValues.get(partitionField)));
+            final StringBuilder keyCondition = new StringBuilder("#pk = :pk");
+            if (sortField != null && keyValues.containsKey(sortField)) {
+                names.put("#sk", sortField);
+                values.put(":sk", encode(keyValues.get(sortField)));
+                keyCondition.append(" AND #sk = :sk");
+            }
+            final QueryRequest.Builder request = QueryRequest.builder()
+                    .tableName(entity)
+                    .keyConditionExpression(keyCondition.toString())
+                    .expressionAttributeNames(names)
+                    .expressionAttributeValues(values)
+                    .limit(query.limit() == 0 ? 500 : query.limit());
+            if (!query.projection().isEmpty()) {
+                final List<String> projected = new ArrayList<>(query.projection().size());
+                for (int i = 0; i < query.projection().size(); i++) {
+                    final String key = "#p" + i;
+                    names.put(key, query.projection().get(i));
+                    projected.add(key);
+                }
+                request.projectionExpression(String.join(",", projected));
+            }
+            request.expressionAttributeNames(names).expressionAttributeValues(values);
+            if (query.cursor() != null) request.exclusiveStartKey(decodeCursor(query.cursor()));
+            final QueryResponse response = client.query(request.build());
             return new Page<>(response.items().stream().map(this::decode).toList(),
                     response.lastEvaluatedKey().isEmpty() ? null : encodeCursor(response.lastEvaluatedKey()));
         }
@@ -284,6 +334,37 @@ final class DynamoDbAdapter implements Adapter {
     private void collectKey(Predicate predicate, Set<String> required, Map<String, AttributeValue> result) {
         if (predicate instanceof Predicate.Comparison value && value.operator() == Predicate.Operator.EQ && required.contains(value.field())) result.put(value.field(), encode(value.value()));
         else if (predicate instanceof Predicate.Junction junction && junction.and()) junction.predicates().forEach(child -> collectKey(child, required, result));
+    }
+
+    private static Map<String, Object> exactKeyEquality(
+            final Predicate predicate,
+            final String partitionField,
+            final String sortField
+    ) {
+        final Set<String> keyFields = new HashSet<>();
+        keyFields.add(partitionField);
+        if (sortField != null) keyFields.add(sortField);
+        final Map<String, Object> values = new LinkedHashMap<>();
+        if (!collectExactKeyEquality(predicate, keyFields, values) || !values.containsKey(partitionField)) return null;
+        return values;
+    }
+
+    private static boolean collectExactKeyEquality(
+            final Predicate predicate,
+            final Set<String> keyFields,
+            final Map<String, Object> values
+    ) {
+        if (predicate instanceof Predicate.Comparison comparison) {
+            if (comparison.operator() != Predicate.Operator.EQ || !keyFields.contains(comparison.field())
+                    || values.containsKey(comparison.field())) return false;
+            values.put(comparison.field(), comparison.value());
+            return true;
+        }
+        if (!(predicate instanceof Predicate.Junction junction) || !junction.and()) return false;
+        for (final Predicate child : junction.predicates()) {
+            if (!collectExactKeyEquality(child, keyFields, values)) return false;
+        }
+        return true;
     }
 
     private record Expression(String text, Map<String, String> names, Map<String, AttributeValue> values) {

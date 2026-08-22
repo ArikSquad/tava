@@ -20,10 +20,10 @@ public final class Entity<T extends Record> {
     private final RecordMapper<T> mapper;
     private final Executor executor;
 
-    Entity(final @NotNull String name, final @NotNull EntityStore store, final @NotNull Class<T> type, final @NotNull Executor executor) {
+    Entity(final @NotNull String name, final @NotNull EntityStore store, final @NotNull RecordMapper<T> mapper, final @NotNull Executor executor) {
         this.name = name;
         this.store = store;
-        this.mapper = new RecordMapper<>(type);
+        this.mapper = mapper;
         this.executor = executor;
     }
 

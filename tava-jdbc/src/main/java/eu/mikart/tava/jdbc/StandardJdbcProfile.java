@@ -24,9 +24,21 @@ public class StandardJdbcProfile implements JdbcProfile {
 
     @Override
     public @NotNull String quote(final @NotNull String identifier) {
-        if (identifier == null || !identifier.matches("[A-Za-z_][A-Za-z0-9_]*"))
+        if (!validIdentifier(identifier))
             throw new IllegalArgumentException("Invalid identifier: " + identifier);
         return quote + identifier + quote;
+    }
+
+    protected static boolean validIdentifier(final String identifier) {
+        if (identifier == null || identifier.isEmpty()) return false;
+        final char first = identifier.charAt(0);
+        if (!((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') || first == '_')) return false;
+        for (int i = 1; i < identifier.length(); i++) {
+            final char value = identifier.charAt(i);
+            if (!((value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z')
+                    || (value >= '0' && value <= '9') || value == '_')) return false;
+        }
+        return true;
     }
 
     @Override

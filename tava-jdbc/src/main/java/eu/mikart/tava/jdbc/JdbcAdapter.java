@@ -196,12 +196,14 @@ public final class JdbcAdapter implements Adapter {
             try (Lease lease = lease(); PreparedStatement ps = lease.connection.prepareStatement(sql.toString())) {
                 bind(ps, parameters);
                 try (ResultSet rs = ps.executeQuery()) {
-                    List<EntityRecord> records = new ArrayList<>();
-                    ResultSetMetaData metadata = rs.getMetaData();
+                    final ResultSetMetaData metadata = rs.getMetaData();
+                    final int columnCount = metadata.getColumnCount();
+                    final String[] columnLabels = new String[columnCount];
+                    for (int i = 0; i < columnCount; i++) columnLabels[i] = metadata.getColumnLabel(i + 1);
+                    final List<EntityRecord> records = new ArrayList<>(Math.min(requested, 1023) + 1);
                     while (rs.next()) {
-                        Map<String, Object> values = new LinkedHashMap<>();
-                        for (int i = 1; i <= metadata.getColumnCount(); i++)
-                            values.put(metadata.getColumnLabel(i), rs.getObject(i));
+                        final Map<String, Object> values = new LinkedHashMap<>(columnCount);
+                        for (int i = 0; i < columnCount; i++) values.put(columnLabels[i], rs.getObject(i + 1));
                         records.add(EntityRecord.of(values));
                     }
                     boolean more = records.size() > requested;
@@ -218,7 +220,8 @@ public final class JdbcAdapter implements Adapter {
             if (mutation.values().isEmpty() && mutation.operations().isEmpty()) return 0;
             List<Object> parameters = new ArrayList<>(mutation.values().values());
             StringBuilder sql = new StringBuilder("UPDATE ").append(profile.quote(entity)).append(" SET ");
-            List<String> assignments = new ArrayList<>(mutation.values().keySet().stream().map(field -> profile.quote(field) + " = ?").toList());
+            List<String> assignments = new ArrayList<>(mutation.values().size() + mutation.operations().size());
+            for (String field : mutation.values().keySet()) assignments.add(profile.quote(field) + " = ?");
             mutation.operations().forEach((field, operation) -> {
                 String quoted = profile.quote(field);
                 if (operation.kind() == Mutation.Kind.INCREMENT) {

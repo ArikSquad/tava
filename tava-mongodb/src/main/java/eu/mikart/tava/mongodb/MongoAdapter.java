@@ -157,8 +157,8 @@ final class MongoAdapter implements Adapter {
         @Override
         public long update(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
             if (mutation.values().isEmpty() && mutation.operations().isEmpty()) return 0;
-            List<Bson> updates = new ArrayList<>(mutation.values().entrySet().stream()
-                    .map(entry -> Updates.set(entry.getKey(), entry.getValue())).map(Bson.class::cast).toList());
+            List<Bson> updates = new ArrayList<>(mutation.values().size() + mutation.operations().size());
+            mutation.values().forEach((field, value) -> updates.add(Updates.set(field, value)));
             mutation.operations().forEach((field, operation) -> updates.add(switch (operation.kind()) {
                 case INCREMENT -> Updates.inc(field, (Number) operation.value());
                 case APPEND_IF_ABSENT, APPEND -> Updates.addToSet(field, operation.value());
@@ -170,7 +170,8 @@ final class MongoAdapter implements Adapter {
 
         @Override public @NotNull eu.mikart.tava.data.MutationResult updateResult(@NotNull String entity, @NotNull Predicate predicate, @NotNull Mutation mutation) {
             if (mutation.values().isEmpty() && mutation.operations().isEmpty()) return new eu.mikart.tava.data.MutationResult(0, 0, 0, eu.mikart.tava.data.MutationResult.Outcome.UNCHANGED);
-            List<Bson> updates = new ArrayList<>(); mutation.values().forEach((field, value) -> updates.add(Updates.set(field, value)));
+            List<Bson> updates = new ArrayList<>(mutation.values().size() + mutation.operations().size());
+            mutation.values().forEach((field, value) -> updates.add(Updates.set(field, value)));
             mutation.operations().forEach((field, operation) -> updates.add(switch (operation.kind()) { case INCREMENT -> Updates.inc(field, (Number) operation.value()); case APPEND_IF_ABSENT, APPEND -> Updates.addToSet(field, operation.value()); case REMOVE -> Updates.pull(field, operation.value()); }));
             var result = session == null ? collection(entity).updateMany(filter(predicate), Updates.combine(updates))
                     : collection(entity).updateMany(session, filter(predicate), Updates.combine(updates));
@@ -185,7 +186,7 @@ final class MongoAdapter implements Adapter {
         }
 
         @Override public @NotNull eu.mikart.tava.data.MutationResult upsert(@NotNull String entity, @NotNull Predicate identity, @NotNull EntityRecord insert, @NotNull Mutation update) {
-            List<Bson> changes = new ArrayList<>();
+            List<Bson> changes = new ArrayList<>(insert.values().size() + update.values().size() + update.operations().size());
             insert.values().forEach((field, value) -> changes.add(Updates.setOnInsert(field, value)));
             update.values().forEach((field, value) -> changes.add(Updates.set(field, value)));
             update.operations().forEach((field, operation) -> changes.add(switch (operation.kind()) {

@@ -2,7 +2,6 @@ package eu.mikart.tava;
 
 import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.migration.Migrations;
-import eu.mikart.tava.schema.RecordSchemas;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.SchemaRenames;
 import eu.mikart.tava.schema.plan.SchemaPlan;
@@ -77,7 +76,8 @@ public final class Tava implements AutoCloseable {
      * Use {@link #records(String)} when you need partial projections or dynamic field sets.
      */
     public <T extends Record> @NotNull Entity<T> entity(final @NotNull Class<T> type) {
-        return new Entity<>(RecordSchemas.describe(type).name(), adapter.entities(), type, executor);
+        final RecordMapper<T> mapper = RecordMapper.of(type);
+        return new Entity<>(mapper.entityName(), adapter.entities(), mapper, executor);
     }
 
     /**
@@ -85,7 +85,7 @@ public final class Tava implements AutoCloseable {
      * Use {@link #records(String)} when you need partial projections or dynamic field sets.
      */
     public <T extends Record> @NotNull Entity<T> entity(final @NotNull String name, final @NotNull Class<T> type) {
-        return new Entity<>(name, adapter.entities(), type, executor);
+        return new Entity<>(name, adapter.entities(), RecordMapper.of(type), executor);
     }
 
     /**

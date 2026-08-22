@@ -11,9 +11,21 @@ import java.time.*;
 import java.util.*;
 
 public final class RecordSchemas {
+    private static final ClassValue<EntityDefinition> CACHE = new ClassValue<>() {
+        @Override
+        protected EntityDefinition computeValue(final Class<?> type) {
+            return describeUncached(type);
+        }
+    };
 
     public static @NotNull EntityDefinition describe(final @NotNull Class<? extends Record> type) {
         if (!type.isRecord()) throw new IllegalArgumentException(type.getName() + " is not a record");
+        return CACHE.get(type);
+    }
+
+    private static @NotNull EntityDefinition describeUncached(final @NotNull Class<?> rawType) {
+        @SuppressWarnings("unchecked")
+        final Class<? extends Record> type = (Class<? extends Record>) rawType;
         final Entity entity = type.getAnnotation(Entity.class);
         final String name = entity != null && !entity.value().isBlank()
             ? entity.value() : decapitalize(type.getSimpleName());

@@ -7,6 +7,8 @@ import java.util.*;
 
 /** Built-in codecs and the JSON representation used for JDBC collection/document values. */
 public final class ValueCodecs {
+    private static final char[] HEX = "0123456789abcdef".toCharArray();
+
     private ValueCodecs() { }
 
     public static <E extends Enum<E>> @NotNull ValueCodec<E> enumName(final @NotNull Class<E> type) {
@@ -89,7 +91,15 @@ public final class ValueCodecs {
                 case '"' -> out.append("\\\""); case '\\' -> out.append("\\\\");
                 case '\b' -> out.append("\\b"); case '\f' -> out.append("\\f");
                 case '\n' -> out.append("\\n"); case '\r' -> out.append("\\r"); case '\t' -> out.append("\\t");
-                default -> { if (c < 0x20) out.append(String.format("\\u%04x", (int) c)); else out.append(c); }
+                default -> {
+                    if (c < 0x20) {
+                        out.append("\\u");
+                        out.append(HEX[(c >>> 12) & 0xF]);
+                        out.append(HEX[(c >>> 8) & 0xF]);
+                        out.append(HEX[(c >>> 4) & 0xF]);
+                        out.append(HEX[c & 0xF]);
+                    } else out.append(c);
+                }
             }
         }
         out.append('"');
