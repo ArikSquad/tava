@@ -4,6 +4,7 @@ import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.capability.Feature;
 import eu.mikart.tava.capability.SupportLevel;
 import eu.mikart.tava.schema.FieldDefinition;
+import org.intellij.lang.annotations.Pattern;
 import org.jetbrains.annotations.NotNull;
 
 public class StandardJdbcProfile implements JdbcProfile {
@@ -23,7 +24,9 @@ public class StandardJdbcProfile implements JdbcProfile {
     }
 
     @Override
-    public @NotNull String quote(final @NotNull String identifier) {
+    public @NotNull String quote(
+            @Pattern("[A-Za-z_][A-Za-z0-9_]*") final @NotNull String identifier
+    ) {
         if (!validIdentifier(identifier))
             throw new IllegalArgumentException("Invalid identifier: " + identifier);
         return quote + identifier + quote;

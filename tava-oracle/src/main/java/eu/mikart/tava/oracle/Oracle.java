@@ -4,6 +4,7 @@ import eu.mikart.tava.jdbc.JdbcAdapter;
 import eu.mikart.tava.jdbc.StandardJdbcProfile;
 import eu.mikart.tava.schema.FieldDefinition;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Range;
 
 public final class Oracle {
     private Oracle() {
@@ -44,7 +45,10 @@ public final class Oracle {
         }
 
         @Override
-        public @NotNull String pagination(final int limit, final int offset) {
+        public @NotNull String pagination(
+                final @Range(from = 1, to = Integer.MAX_VALUE) int limit,
+                final @Range(from = 0, to = Integer.MAX_VALUE) int offset
+        ) {
             return " OFFSET " + offset + " ROWS FETCH NEXT " + limit + " ROWS ONLY";
         }
 

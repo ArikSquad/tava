@@ -2,6 +2,7 @@ package eu.mikart.tava.schema;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Range;
 
 public record FieldType(
         @NotNull LogicalType logicalType,
@@ -22,11 +23,14 @@ public record FieldType(
         return new FieldType(type, null, null, null);
     }
 
-    public static @NotNull FieldType string(final int length) {
+    public static @NotNull FieldType string(final @Range(from = 1, to = Integer.MAX_VALUE) int length) {
         return new FieldType(LogicalType.STRING, length, null, null);
     }
 
-    public static @NotNull FieldType decimal(final int precision, final int scale) {
+    public static @NotNull FieldType decimal(
+            final @Range(from = 1, to = Integer.MAX_VALUE) int precision,
+            final @Range(from = 0, to = Integer.MAX_VALUE) int scale
+    ) {
         return new FieldType(LogicalType.DECIMAL, null, precision, scale);
     }
 }

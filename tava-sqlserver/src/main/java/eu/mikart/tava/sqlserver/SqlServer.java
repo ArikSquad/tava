@@ -3,7 +3,9 @@ package eu.mikart.tava.sqlserver;
 import eu.mikart.tava.jdbc.JdbcAdapter;
 import eu.mikart.tava.jdbc.StandardJdbcProfile;
 import eu.mikart.tava.schema.FieldDefinition;
+import org.intellij.lang.annotations.Pattern;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Range;
 
 public final class SqlServer {
     private SqlServer() {
@@ -23,7 +25,9 @@ public final class SqlServer {
         }
 
         @Override
-        public @NotNull String quote(final @NotNull String identifier) {
+        public @NotNull String quote(
+                @Pattern("[A-Za-z_][A-Za-z0-9_]*") final @NotNull String identifier
+        ) {
             if (!validIdentifier(identifier))
                 throw new IllegalArgumentException("Invalid identifier: " + identifier);
             return "[" + identifier + "]";
@@ -48,7 +52,10 @@ public final class SqlServer {
         }
 
         @Override
-        public @NotNull String pagination(final int limit, final int offset) {
+        public @NotNull String pagination(
+                final @Range(from = 1, to = Integer.MAX_VALUE) int limit,
+                final @Range(from = 0, to = Integer.MAX_VALUE) int offset
+        ) {
             return " OFFSET " + offset + " ROWS FETCH NEXT " + limit + " ROWS ONLY";
         }
 

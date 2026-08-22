@@ -2,6 +2,7 @@ package eu.mikart.tava.query;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Range;
 
 import java.util.List;
 
@@ -9,7 +10,7 @@ public record Query(
         @NotNull Predicate predicate,
         @NotNull List<String> projection,
         @NotNull List<Sort> sorting,
-        int limit,
+        @Range(from = 0, to = Integer.MAX_VALUE) int limit,
         @Nullable String cursor
 ) {
     public Query {
@@ -49,7 +50,7 @@ public record Query(
             return this;
         }
 
-        public @NotNull Builder limit(final int value) {
+        public @NotNull Builder limit(final @Range(from = 0, to = Integer.MAX_VALUE) int value) {
             this.limit = value;
             return this;
         }

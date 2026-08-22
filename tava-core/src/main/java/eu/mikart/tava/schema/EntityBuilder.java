@@ -1,5 +1,7 @@
 package eu.mikart.tava.schema;
 
+import org.jetbrains.annotations.Range;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,7 +47,11 @@ public final class EntityBuilder {
         return field(name, FieldType.of(LogicalType.INT64));
     }
 
-    public FieldBuilder decimal(String name, int precision, int scale) {
+    public FieldBuilder decimal(
+            String name,
+            @Range(from = 1, to = Integer.MAX_VALUE) int precision,
+            @Range(from = 0, to = Integer.MAX_VALUE) int scale
+    ) {
         return field(name, FieldType.decimal(precision, scale));
     }
 
@@ -138,16 +144,19 @@ public final class EntityBuilder {
             return this;
         }
 
-        public FieldBuilder field(int length) {
+        public FieldBuilder field(@Range(from = 1, to = Integer.MAX_VALUE) int length) {
             return length(length);
         }
 
-        public FieldBuilder length(int length) {
+        public FieldBuilder length(@Range(from = 1, to = Integer.MAX_VALUE) int length) {
             type = FieldType.string(length);
             return this;
         }
 
-        public FieldBuilder decimal(int precision, int scale) {
+        public FieldBuilder decimal(
+                @Range(from = 1, to = Integer.MAX_VALUE) int precision,
+                @Range(from = 0, to = Integer.MAX_VALUE) int scale
+        ) {
             type = FieldType.decimal(precision, scale);
             return this;
         }

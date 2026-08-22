@@ -1,11 +1,12 @@
 package eu.mikart.tava.transfer;
 
 import eu.mikart.tava.data.EntityRecord;
+import org.jetbrains.annotations.Range;
 
 import java.util.function.UnaryOperator;
 
 public record TransferOptions(
-    int batchSize,
+    @Range(from = 1, to = Integer.MAX_VALUE) int batchSize,
     boolean allowLossy,
     boolean applySchema,
     UnaryOperator<EntityRecord> transform,

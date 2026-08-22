@@ -19,10 +19,13 @@ import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.util.*;
 import java.util.function.Function;
+import org.intellij.lang.annotations.RegExp;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class JdbcAdapter implements Adapter {
+    private static final @RegExp String SAFE_NATIVE_TYPE_PATTERN = "[A-Za-z0-9_(), .]+";
+
     @FunctionalInterface
     public interface Connections {
         @NotNull Connection open() throws SQLException;
@@ -405,7 +408,7 @@ public final class JdbcAdapter implements Adapter {
         for (EntityDefinition entity : schema.entities()) {
             for (FieldDefinition field : entity.fields()) {
                 String nativeType = nativeType(field);
-                if (nativeType != null && (!nativeType.matches("[A-Za-z0-9_(), .]+")
+                if (nativeType != null && (!nativeType.matches(SAFE_NATIVE_TYPE_PATTERN)
                         || nativeType.contains("--") || nativeType.contains("/*"))) {
                     throw new TavaException.Schema("Unsafe native type override for "
                             + entity.name() + "." + field.name());

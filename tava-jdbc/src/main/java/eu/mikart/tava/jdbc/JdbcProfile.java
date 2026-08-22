@@ -3,8 +3,10 @@ package eu.mikart.tava.jdbc;
 import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.schema.FieldDefinition;
 import eu.mikart.tava.query.Mutation;
+import org.intellij.lang.annotations.Pattern;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Range;
 
 import java.util.List;
 import java.sql.SQLException;
@@ -15,7 +17,7 @@ public interface JdbcProfile {
     }
     @NotNull String name();
 
-    @NotNull String quote(@NotNull String identifier);
+    @NotNull String quote(@Pattern("[A-Za-z_][A-Za-z0-9_]*") @NotNull String identifier);
 
     @NotNull String type(@NotNull FieldDefinition field);
 
@@ -39,7 +41,10 @@ public interface JdbcProfile {
 
     default boolean retryableWrite(@NotNull SQLException failure) { return false; }
 
-    default @NotNull String pagination(final int limit, final int offset) {
+    default @NotNull String pagination(
+            final @Range(from = 1, to = Integer.MAX_VALUE) int limit,
+            final @Range(from = 0, to = Integer.MAX_VALUE) int offset
+    ) {
         return " LIMIT " + limit + " OFFSET " + offset;
     }
 
