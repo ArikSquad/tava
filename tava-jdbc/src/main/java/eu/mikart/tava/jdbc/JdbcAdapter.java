@@ -532,6 +532,7 @@ public final class JdbcAdapter implements Adapter {
         return switch (type) {
             case Types.TINYINT, Types.SMALLINT, Types.INTEGER -> FieldType.of(LogicalType.INT32);
             case Types.BIGINT -> FieldType.of(LogicalType.INT64);
+            case Types.FLOAT, Types.REAL, Types.DOUBLE -> FieldType.of(LogicalType.FLOAT64);
             case Types.NUMERIC, Types.DECIMAL -> FieldType.decimal(Math.max(size, 1), Math.max(scale, 0));
             case Types.BOOLEAN, Types.BIT -> FieldType.of(LogicalType.BOOLEAN);
             case Types.DATE -> FieldType.of(LogicalType.LOCAL_DATE);

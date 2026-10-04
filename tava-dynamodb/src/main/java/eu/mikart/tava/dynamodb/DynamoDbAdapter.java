@@ -313,7 +313,7 @@ final class DynamoDbAdapter implements Adapter {
 
     private ScalarAttributeType scalarType(FieldDefinition field) {
         return switch (field.type().logicalType()) {
-            case INT32, INT64, DECIMAL -> ScalarAttributeType.N;
+            case INT32, INT64, FLOAT64, DECIMAL -> ScalarAttributeType.N;
             case BINARY -> ScalarAttributeType.B;
             default -> ScalarAttributeType.S;
         };

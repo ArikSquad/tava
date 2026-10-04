@@ -31,6 +31,7 @@ public final class Oracle {
                 case STRING -> "VARCHAR2(" + (field.type().length() == null ? 255 : field.type().length()) + ")";
                 case INT32 -> "NUMBER(10)";
                 case INT64 -> "NUMBER(19)";
+                case FLOAT64 -> "BINARY_DOUBLE";
                 case BOOLEAN -> "NUMBER(1)";
                 case BINARY -> "BLOB";
                 case INSTANT -> "TIMESTAMP WITH TIME ZONE";

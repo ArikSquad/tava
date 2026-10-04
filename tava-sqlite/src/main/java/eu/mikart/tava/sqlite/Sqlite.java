@@ -98,6 +98,7 @@ public final class Sqlite {
         public @NotNull String type(final @NotNull FieldDefinition field) {
             return switch (field.type().logicalType()) {
                 case INT32, INT64, BOOLEAN -> "INTEGER";
+                case FLOAT64 -> "REAL";
                 case BINARY -> "BLOB";
                 case DECIMAL -> "NUMERIC";
                 default -> "TEXT";

@@ -51,6 +51,7 @@ public class StandardJdbcProfile implements JdbcProfile {
             case TEXT, JSON -> "TEXT";
             case INT32 -> "INTEGER";
             case INT64 -> "BIGINT";
+            case FLOAT64 -> "DOUBLE PRECISION";
             case DECIMAL -> "DECIMAL(" + field.type().precision() + "," + field.type().scale() + ")";
             case BOOLEAN -> "BOOLEAN";
             case UUID -> "VARCHAR(36)";

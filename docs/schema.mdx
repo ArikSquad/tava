@@ -71,6 +71,7 @@ native storage.
 | `String` without a length | `TEXT` |
 | `int`, `Integer`, `short`, `Short` | `INT32` |
 | `long`, `Long` | `INT64` |
+| `double`, `Double` | `FLOAT64` |
 | `boolean`, `Boolean` | `BOOLEAN` |
 | `UUID` | `UUID` |
 | `Instant`, `OffsetDateTime` | `INSTANT` |
@@ -122,6 +123,7 @@ Schema schema = Schema.builder()
                 .uuid("id").identity().generated(GeneratedValue.UUID).add()
                 .string("email").length(255).required().unique().add()
                 .integer("score").required().add()
+                .doublePrecision("rating").add()
                 .instant("createdAt").generated(GeneratedValue.NOW).add()
                 .index("accounts_email_idx", true, "email"))
         .build();

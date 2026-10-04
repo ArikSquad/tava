@@ -62,6 +62,7 @@ public final class RecordSchemas {
         if (type == int.class || type == Integer.class || type == short.class || type == Short.class)
             return FieldType.of(LogicalType.INT32);
         if (type == long.class || type == Long.class) return FieldType.of(LogicalType.INT64);
+        if (type == double.class || type == Double.class) return FieldType.of(LogicalType.FLOAT64);
         if (type == boolean.class || type == Boolean.class) return FieldType.of(LogicalType.BOOLEAN);
         if (type == UUID.class) return FieldType.of(LogicalType.UUID);
         if (type == Instant.class || type == OffsetDateTime.class) return FieldType.of(LogicalType.INSTANT);

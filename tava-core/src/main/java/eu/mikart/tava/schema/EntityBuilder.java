@@ -47,6 +47,10 @@ public final class EntityBuilder {
         return field(name, FieldType.of(LogicalType.INT64));
     }
 
+    public FieldBuilder doublePrecision(String name) {
+        return field(name, FieldType.of(LogicalType.FLOAT64));
+    }
+
     public FieldBuilder decimal(
             String name,
             @Range(from = 1, to = Integer.MAX_VALUE) int precision,

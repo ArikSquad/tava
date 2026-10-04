@@ -39,6 +39,7 @@ public final class SqlServer {
                 case UUID -> "UNIQUEIDENTIFIER";
                 case JSON, TEXT -> "NVARCHAR(MAX)";
                 case STRING -> "NVARCHAR(" + (field.type().length() == null ? 255 : field.type().length()) + ")";
+                case FLOAT64 -> "FLOAT";
                 case BOOLEAN -> "BIT";
                 case BINARY -> "VARBINARY(MAX)";
                 case INSTANT -> "DATETIMEOFFSET";

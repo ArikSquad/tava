@@ -287,6 +287,7 @@ final class RecordMapper<T extends Record> {
             case Object o when target == LocalDateTime.class -> LocalDateTime.parse(o.toString());
             case Number n when target == int.class || target == Integer.class -> n.intValue();
             case Number n when target == long.class || target == Long.class -> n.longValue();
+            case Number n when target == double.class || target == Double.class -> n.doubleValue();
             case Number n when target == boolean.class || target == Boolean.class -> n.intValue() != 0;
             case Number n when target == byte.class || target == Byte.class -> n.byteValue();
             default -> raw;
