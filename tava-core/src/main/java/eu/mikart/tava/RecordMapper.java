@@ -216,6 +216,7 @@ final class RecordMapper<T extends Record> {
         return encode(component, value);
     }
 
+    @SuppressWarnings("unchecked")
     private Object decode(final Component component, Object raw) {
         final ValueCodec<Object> codec = component.codec();
         if (codec != null) return codec.decode(raw);

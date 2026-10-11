@@ -2,6 +2,7 @@ package eu.mikart.tava.transfer;
 
 import eu.mikart.tava.Tava;
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.plan.ApplyOptions;
@@ -29,8 +30,16 @@ public final class DataTransfer {
             String cursor = null;
             final var seenCursors = new java.util.HashSet<String>();
             do {
-                var page = source.records(entity.name()).find(Query.builder()
-                    .limit(options.batchSize()).cursor(cursor).build());
+                Page<EntityRecord> page;
+                try {
+                    page = source.records(entity.name()).find(Query.builder()
+                        .limit(options.batchSize()).cursor(cursor).build());
+                } catch (RuntimeException failure) {
+                    issues.add(new TransferIssue(entity.name(), null, TransferIssue.Severity.ERROR,
+                        failure.getMessage()));
+                    counts.put(entity.name(), count);
+                    return new TransferReport(counts, issues, false);
+                }
                 final String nextCursor = page.nextCursor();
                 if (nextCursor != null && !seenCursors.add(nextCursor)) {
                     issues.add(new TransferIssue(entity.name(), null, TransferIssue.Severity.ERROR,

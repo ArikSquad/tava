@@ -5,6 +5,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 
 public record Mutation(@NotNull Map<String, Object> values, @NotNull Map<String, Operation> operations) {
     public enum Kind { INCREMENT, APPEND_IF_ABSENT, @Deprecated APPEND, REMOVE }
@@ -29,7 +30,12 @@ public record Mutation(@NotNull Map<String, Object> values, @NotNull Map<String,
         }
 
         public <T> @NotNull Builder set(final @NotNull FieldRef<T> field, final @Nullable T value) { return set(field.name(), value); }
-        public @NotNull Builder increment(final @NotNull FieldRef<? extends Number> field, final @NotNull Number amount) { operations.put(field.name(), new Operation(Kind.INCREMENT, amount)); return this; }
+        public @NotNull Builder increment(final @NotNull FieldRef<? extends Number> field, final @NotNull Number amount) {
+            Objects.requireNonNull(field, "field");
+            Objects.requireNonNull(amount, "amount");
+            operations.put(field.name(), new Operation(Kind.INCREMENT, amount));
+            return this;
+        }
         /** Atomically adds a value only when the collection does not already contain it. */
         public <T> @NotNull Builder appendIfAbsent(final @NotNull FieldRef<? extends java.util.Collection<T>> field, final @Nullable T value) { operations.put(field.name(), new Operation(Kind.APPEND_IF_ABSENT, value)); return this; }
         /** Alias for {@link #appendIfAbsent(FieldRef, Object)} retained for source compatibility. */
