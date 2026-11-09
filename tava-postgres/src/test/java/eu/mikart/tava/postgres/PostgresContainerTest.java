@@ -1,5 +1,7 @@
 package eu.mikart.tava.postgres;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import eu.mikart.tava.Tava;
 import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.query.Mutation;
@@ -8,16 +10,14 @@ import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.Sort;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.testkit.AdapterContractTest;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-
-import java.sql.Connection;
-import java.util.List;
-import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.*;
 
 @Testcontainers(disabledWithoutDocker = true)
 class PostgresContainerTest extends AdapterContractTest {
@@ -26,52 +26,78 @@ class PostgresContainerTest extends AdapterContractTest {
 
     @Override
     protected Tava openTava(String namespace) {
-        return Tava.open(Postgres.connect(POSTGRES.getJdbcUrl(),
-                POSTGRES.getUsername(), POSTGRES.getPassword()));
+        return Tava.open(Postgres.connect(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()));
     }
 
     @Test
     void runsCrudPredicatesPagingAndNativeAccess() {
-        try (Tava tava = Tava.open(Postgres.connect(POSTGRES.getJdbcUrl(),
-                POSTGRES.getUsername(), POSTGRES.getPassword()))) {
+        try (Tava tava =
+                Tava.open(Postgres.connect(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()))) {
             Schema schema = accounts();
             tava.plan(schema).apply();
             UUID ada = UUID.fromString("018f2c20-0583-7c29-baa5-37734bb2d102");
             UUID grace = UUID.fromString("018f2c20-0583-7c29-baa5-37734bb2d103");
 
-            tava.records("accounts").insert(EntityRecord.builder()
-                    .set("id", ada)
-                    .set("email", "ada@example.com")
-                    .set("score", 7)
-                    .set("note", null)
-                    .build());
-            tava.records("accounts").insert(EntityRecord.builder()
-                    .set("id", grace)
-                    .set("email", "grace@example.com")
-                    .set("score", 9)
-                    .set("note", "compiler")
-                    .build());
+            tava.records("accounts")
+                    .insert(EntityRecord.builder()
+                            .set("id", ada)
+                            .set("email", "ada@example.com")
+                            .set("score", 7)
+                            .set("note", null)
+                            .build());
+            tava.records("accounts")
+                    .insert(EntityRecord.builder()
+                            .set("id", grace)
+                            .set("email", "grace@example.com")
+                            .set("score", 9)
+                            .set("note", "compiler")
+                            .build());
 
-            assertEquals(1, tava.records("accounts").find(Query.builder()
-                    .where(Predicate.eq("note", null)).build()).items().size());
-            assertEquals(1, tava.records("accounts").update(Predicate.eq("email", "ada@example.com"),
-                    Mutation.builder().set("score", 8).build()));
+            assertEquals(
+                    1,
+                    tava.records("accounts")
+                            .find(Query.builder()
+                                    .where(Predicate.eq("note", null))
+                                    .build())
+                            .items()
+                            .size());
+            assertEquals(
+                    1,
+                    tava.records("accounts")
+                            .update(
+                                    Predicate.eq("email", "ada@example.com"),
+                                    Mutation.builder().set("score", 8).build()));
 
-            var firstPage = tava.records("accounts").find(Query.builder()
-                    .sort(Sort.asc("email")).limit(1).build());
-            assertEquals(List.of("ada@example.com"), firstPage.items().stream()
-                    .map(record -> record.get("email")).toList());
+            var firstPage = tava.records("accounts")
+                    .find(Query.builder().sort(Sort.asc("email")).limit(1).build());
+            assertEquals(
+                    List.of("ada@example.com"),
+                    firstPage.items().stream()
+                            .map(record -> record.get("email"))
+                            .toList());
             assertNotNull(firstPage.nextCursor());
 
-            var secondPage = tava.records("accounts").find(Query.builder()
-                    .sort(Sort.asc("email")).limit(1).cursor(firstPage.nextCursor()).build());
-            assertEquals(List.of("grace@example.com"), secondPage.items().stream()
-                    .map(record -> record.get("email")).toList());
+            var secondPage = tava.records("accounts")
+                    .find(Query.builder()
+                            .sort(Sort.asc("email"))
+                            .limit(1)
+                            .cursor(firstPage.nextCursor())
+                            .build());
+            assertEquals(
+                    List.of("grace@example.com"),
+                    secondPage.items().stream()
+                            .map(record -> record.get("email"))
+                            .toList());
             assertNull(secondPage.nextCursor());
 
-            try (Connection connection = tava.nativeHandle(Connection.class)) {
-                assertTrue(connection.isValid(2));
-            }
+            tava.nativeAccess().withNative(Connection.class, connection -> {
+                try {
+                    assertTrue(connection.isValid(2));
+                } catch (SQLException failure) {
+                    fail(failure);
+                }
+                return null;
+            });
             assertEquals(1, tava.records("accounts").delete(Predicate.startsWith("email", "grace")));
         } catch (Exception failure) {
             fail(failure);
@@ -79,11 +105,13 @@ class PostgresContainerTest extends AdapterContractTest {
     }
 
     private static Schema accounts() {
-        return Schema.builder().entity("accounts", entity -> {
-            entity.uuid("id").identity();
-            entity.string("email").required().unique().field(255);
-            entity.integer("score").required();
-            entity.string("note").field(255);
-        }).build();
+        return Schema.builder()
+                .entity("accounts", entity -> {
+                    entity.uuid("id").identity();
+                    entity.string("email").required().unique().length(255);
+                    entity.integer("score").required();
+                    entity.string("note").length(255);
+                })
+                .build();
     }
 }

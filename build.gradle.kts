@@ -1,6 +1,9 @@
+import org.gradle.external.javadoc.StandardJavadocDocletOptions
+
 plugins {
     base
     id("jacoco")
+    id("com.diffplug.spotless") version "8.11.0"
 }
 
 group = "eu.mikart.tava"
@@ -29,6 +32,12 @@ subprojects {
         }
         tasks.withType<Test>().configureEach {
             useJUnitPlatform()
+        }
+        tasks.withType<Javadoc>().configureEach {
+            (options as StandardJavadocDocletOptions).addBooleanOption("Werror", true)
+        }
+        project.tasks.named("check").configure {
+            dependsOn(project.tasks.named("javadoc"))
         }
         dependencies {
             add("compileOnly", rootProject.libs.jetbrains.annotations)
@@ -167,6 +176,81 @@ tasks.register<JacocoCoverageVerification>("jacocoCoverageVerification") {
                 minimum = "0.50".toBigDecimal()
             }
         }
+    }
+}
+
+spotless {
+    java {
+        target("**/src/**/*.java")
+        shortenFullyQualifiedTypes()
+        importOrder()
+        removeUnusedImports()
+        palantirJavaFormat("2.103.0").formatJavadoc(true)
+    }
+}
+
+val javaSourceFiles = fileTree(rootDir) {
+    include("**/src/**/*.java")
+    exclude("**/build/**", "**/.gradle/**")
+}
+
+tasks.register("checkInlineFullyQualifiedTypes") {
+    group = "verification"
+    description = "Rejects inline fully qualified Java class references"
+    inputs.files(javaSourceFiles)
+
+    doLast {
+        // Ignore text-block examples unless their triple-quote delimiters are escaped.
+        val textBlock = "(?s:(?<!\\\\)(?:\\\\\\\\)*\"{3}.*?(?<!\\\\)(?:\\\\\\\\)*\"{3})"
+        val commentsAndLiterals = Regex(
+            "$textBlock|(?s:/\\*.*?\\*/)|//[^\\r\\n]*|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'"
+        )
+        val declarations = Regex("(?m)^[ \\t]*(?:package|import)\\b(?s:.*?);")
+        val annotations = Regex("@[A-Z_$][\\w$]*(?:\\([^)]*\\))?\\s+")
+        val qualifiedType = Regex(
+            "\\b(?:[a-z_$][\\w$]*\\s*\\.\\s*)+"
+                + "(?:@[A-Z_$][\\w$]*(?:\\([^)]*\\))?\\s+)?[A-Z_$][\\w$]*"
+        )
+        // These names collide with imported types, so Java requires qualification at the use site.
+        val identityCollision = setOf("eu.mikart.tava.data.Identity")
+        val sqlDateCollision = setOf("java.sql.Date")
+        val allowedCollisions = mapOf(
+            "tava-core/src/main/java/eu/mikart/tava/RecordMapper.java" to identityCollision,
+            "tava-sqlite/src/test/java/eu/mikart/tava/sqlite/SqliteMemoryTest.java" to identityCollision,
+            "tava-core/src/main/java/eu/mikart/tava/transfer/ResumableTransfer.java" to sqlDateCollision,
+            "tava-core/src/main/java/eu/mikart/tava/transfer/TransferRecords.java" to sqlDateCollision,
+            "tava-mongodb/src/main/java/eu/mikart/tava/mongodb/MongoAdapter.java" to sqlDateCollision,
+        )
+
+        fun blankTextPreservingLines(value: String): String =
+            value.map { character -> if (character == '\n') '\n' else ' ' }.joinToString("")
+
+        val violations = javaSourceFiles.files.sortedBy { it.path }.flatMap { file ->
+            val relativePath = rootDir.toPath().relativize(file.toPath()).toString().replace('\\', '/')
+            val source = file.readText()
+            // Keep line positions stable while removing comments, strings, text blocks, and declarations.
+            val masked = commentsAndLiterals.replace(source) { match -> blankTextPreservingLines(match.value) }
+            val code = declarations.replace(masked) { match -> blankTextPreservingLines(match.value) }
+            qualifiedType.findAll(code).mapNotNull { match ->
+                val name = match.value.replace(annotations, "").replace(Regex("\\s+"), "").trim()
+                if (name in allowedCollisions[relativePath].orEmpty()) null
+                else {
+                    val line = code.take(match.range.first).count { it == '\n' } + 1
+                    "$relativePath:$line: use an import instead of $name"
+                }
+            }.toList()
+        }
+        if (violations.isNotEmpty()) {
+            throw GradleException(
+                "Inline fully qualified class references are not allowed:\n${violations.joinToString("\n")}"
+            )
+        }
+    }
+}
+
+allprojects {
+    tasks.matching { it.name == "check" }.configureEach {
+        dependsOn(":spotlessCheck", ":checkInlineFullyQualifiedTypes")
     }
 }
 

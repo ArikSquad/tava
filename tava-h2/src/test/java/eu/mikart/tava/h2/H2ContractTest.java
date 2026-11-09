@@ -1,6 +1,9 @@
 package eu.mikart.tava.h2;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import eu.mikart.tava.Tava;
+import eu.mikart.tava.TavaException;
 import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.migration.Migration;
 import eu.mikart.tava.migration.MigrationResult;
@@ -13,13 +16,11 @@ import eu.mikart.tava.schema.annotation.*;
 import eu.mikart.tava.testkit.AdapterContractTest;
 import eu.mikart.tava.transfer.DataTransfer;
 import eu.mikart.tava.transfer.TransferOptions;
-import org.junit.jupiter.api.Test;
-
+import java.sql.Connection;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 class H2ContractTest extends AdapterContractTest {
     @Override
@@ -36,41 +37,88 @@ class H2ContractTest extends AdapterContractTest {
     void schemaCrudNativeAndTransfer() {
         Schema schema = Schema.builder().record(Account.class).build();
         try (Tava source = Tava.open(H2.memory("source-" + UUID.randomUUID()));
-             Tava target = Tava.open(H2.memory("target-" + UUID.randomUUID()))) {
+                Tava target = Tava.open(H2.memory("target-" + UUID.randomUUID()))) {
             source.plan(schema).apply();
             UUID id = UUID.randomUUID();
             source.entity(Account.class).insert(new Account(id, "ada@example.com", 7, null));
 
-            var found = source.entity(Account.class).find(Query.builder()
-                    .where(Predicate.eq("id", id)).limit(1).build()).items();
+            var found = source.entity(Account.class)
+                    .find(Query.builder().where(Predicate.eq("id", id)).limit(1).build())
+                    .items();
             assertEquals(1, found.size());
             assertEquals("ada@example.com", found.getFirst().email());
 
-            assertEquals(1, source.entity(Account.class).update(Predicate.eq("id", id),
-                    Mutation.builder().set("score", 8).build()));
+            assertEquals(
+                    1,
+                    source.entity(Account.class)
+                            .update(
+                                    Predicate.eq("id", id),
+                                    Mutation.builder().set("score", 8).build()));
 
             var report = DataTransfer.copy(source, target, schema, TransferOptions.defaults());
             assertTrue(report.complete());
             assertEquals(1L, report.transferred().get("account"));
-            assertEquals(1, target.entity(Account.class).find(Query.all()).items().size());
+            assertEquals(
+                    1, target.entity(Account.class).find(Query.all()).items().size());
 
-            try (var connection = source.nativeHandle(java.sql.Connection.class)) {
+            source.nativeAccess().withNative(Connection.class, connection -> {
                 assertNotNull(connection);
-            } catch (java.sql.SQLException failure) {
-                fail(failure);
-            }
+                return null;
+            });
+        }
+    }
+
+    @Test
+    void rollsBackPartialTransactionalBatchAfterConflict() {
+        Schema schema = Schema.builder()
+                .entity("items", entity -> {
+                    entity.integer("id").identity().add().string("details");
+                })
+                .build();
+
+        try (Tava tava = Tava.open(H2.memory("batch-savepoint-" + UUID.randomUUID()))) {
+            tava.plan(schema).apply();
+
+            tava.transaction(transaction -> {
+                assertThrows(
+                        TavaException.Conflict.class,
+                        () -> transaction
+                                .records("items")
+                                .insert(List.of(
+                                        EntityRecord.builder()
+                                                .set("id", 1)
+                                                .set("details", "first statement group")
+                                                .build(),
+                                        EntityRecord.builder().set("id", 1).build())));
+                assertTrue(
+                        transaction.records("items").find(Query.all()).items().isEmpty());
+                transaction
+                        .records("items")
+                        .insert(EntityRecord.builder().set("id", 2).build());
+                return null;
+            });
+
+            var records = tava.records("items").find(Query.all()).items();
+            assertEquals(1, records.size());
+            assertEquals(2, records.getFirst().get("id"));
         }
     }
 
     @Test
     void appliesMigrationsOnceAndTracksIds() {
-        final Migration authentication = Migration.up("2026-01-authentication",
-                Schema.builder().entity("accounts", entity -> {
-                    entity.uuid("id").identity();
-                    entity.string("email").required().unique().field(255);
-                }).build());
-        final Migration score = Migration.up("2026-02-score",
-                Schema.builder().entity("accounts", entity -> entity.integer("score")).build());
+        final Migration authentication = Migration.up(
+                "2026-01-authentication",
+                Schema.builder()
+                        .entity("accounts", entity -> {
+                            entity.uuid("id").identity();
+                            entity.string("email").required().unique().length(255);
+                        })
+                        .build());
+        final Migration score = Migration.up(
+                "2026-02-score",
+                Schema.builder()
+                        .entity("accounts", entity -> entity.integer("score"))
+                        .build());
 
         try (Tava tava = Tava.open(H2.memory("migration-" + UUID.randomUUID()))) {
             final var first = tava.migrations().apply(authentication, score);
@@ -78,13 +126,16 @@ class H2ContractTest extends AdapterContractTest {
 
             final var second = tava.migrations().apply(authentication, score);
             assertEquals(0, second.stream().filter(MigrationResult::applied).count());
-            assertEquals(List.of("2026-01-authentication", "2026-02-score"), tava.migrations().applied());
+            assertEquals(
+                    List.of("2026-01-authentication", "2026-02-score"),
+                    tava.migrations().applied());
 
-            tava.records("accounts").insert(EntityRecord.builder()
-                    .set("id", UUID.randomUUID())
-                    .set("email", "grace@example.com")
-                    .set("score", 9)
-                    .build());
+            tava.records("accounts")
+                    .insert(EntityRecord.builder()
+                            .set("id", UUID.randomUUID())
+                            .set("email", "grace@example.com")
+                            .set("score", 9)
+                            .build());
             assertEquals(1, tava.records("accounts").find(Query.all()).items().size());
         }
     }
@@ -93,18 +144,34 @@ class H2ContractTest extends AdapterContractTest {
     void migrationStepsCanMutateSchemaAndDataInOrder() {
         final UUID id = UUID.randomUUID();
         final Migration migration = Migration.builder("2026-03-backfill-email")
-                .upSchema(Schema.builder().entity("profiles", entity -> {
-                    entity.uuid("id").identity();
-                    entity.string("name").required().field(120);
-                }).build())
-                .up("Seed profile", context -> context.insert("profiles", EntityRecord.builder()
-                        .set("id", id)
-                        .set("name", "Ada Lovelace")
-                        .build()))
-                .upSchema(Schema.builder().entity("profiles", entity -> entity.string("email").field(255)).build())
-                .up("Backfill email", context -> context.forEach("profiles", Query.all(), record ->
-                        context.update("profiles", Predicate.eq("id", record.get("id")),
-                                Mutation.builder().set("email", "ada@example.com").build())))
+                .upSchema(Schema.builder()
+                        .entity("profiles", entity -> {
+                            entity.uuid("id").identity();
+                            entity.string("name").required().length(120);
+                        })
+                        .build())
+                .up(
+                        "Seed profile",
+                        context -> context.insert(
+                                "profiles",
+                                EntityRecord.builder()
+                                        .set("id", id)
+                                        .set("name", "Ada Lovelace")
+                                        .build()))
+                .upSchema(Schema.builder()
+                        .entity("profiles", entity -> entity.string("email").length(255))
+                        .build())
+                .up(
+                        "Backfill email",
+                        context -> context.forEach(
+                                "profiles",
+                                Query.all(),
+                                record -> context.update(
+                                        "profiles",
+                                        Predicate.eq("id", record.get("id")),
+                                        Mutation.builder()
+                                                .set("email", "ada@example.com")
+                                                .build())))
                 .down("Remove seeded profile", context -> context.delete("profiles", Predicate.eq("id", id)))
                 .build();
 
@@ -127,7 +194,7 @@ class H2ContractTest extends AdapterContractTest {
             @Identity UUID id,
             @Required @Unique @Field(length = 200) String email,
             int score,
-            @Generated(GeneratedValue.NOW) @H2Type("TIMESTAMP WITH TIME ZONE") Instant createdAt
-    ) {
-    }
+
+            @Generated(GeneratedValue.NOW) @H2Type("TIMESTAMP WITH TIME ZONE")
+            Instant createdAt) {}
 }

@@ -1,22 +1,19 @@
 package eu.mikart.tava.migration;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import eu.mikart.tava.Tava;
 import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.h2.H2;
-import eu.mikart.tava.migration.Migration;
-import eu.mikart.tava.migration.MigrationOperationResult;
-import eu.mikart.tava.migration.MigrationResult;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.Schema;
-import org.junit.jupiter.api.Test;
-
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.*;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
 
 class MigrationTest {
 
@@ -25,20 +22,51 @@ class MigrationTest {
     }
 
     private String uniqueEntity(String prefix) {
-        return (prefix + UUID.randomUUID().toString().replace("-", "").substring(0, 12))
-                .toLowerCase(java.util.Locale.ROOT);
+        return (prefix + UUID.randomUUID().toString().replace("-", "").substring(0, 12)).toLowerCase(Locale.ROOT);
+    }
+
+    @Test
+    void exposesTypedMigrationStatusAndLockOwner() {
+        String id = uniqueEntity("typed_status");
+        AtomicReference<MigrationLockInfo> lock = new AtomicReference<>();
+
+        try (Tava tava = openTava(id)) {
+            Migration migration = Migration.builder(id + "_migration")
+                    .checksum("sha256:stable-definition")
+                    .up(
+                            "Observe lock",
+                            context -> lock.set(tava.migrations().lock().orElseThrow()))
+                    .build();
+
+            assertTrue(tava.migrations().apply(migration).getFirst().applied());
+
+            MigrationStatus status = tava.migrations().status(migration.id()).orElseThrow();
+            assertEquals(MigrationStatus.State.APPLIED, status.state());
+            assertEquals(MigrationStatus.Direction.UP, status.direction());
+            assertEquals(1, status.completedSteps());
+            assertEquals("sha256:stable-definition", status.checksum());
+            assertFalse(tava.migrations().releaseLock(lock.get()));
+        }
     }
 
     @Test
     void migrationWithNoopUpAndDownRollback() {
         String entity = uniqueEntity("rollback");
         Migration create = Migration.builder(entity + "_create")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert initial", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "Initial").build()))
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("name").required().length(100);
+                        })
+                        .build())
+                .up(
+                        "Insert initial",
+                        ctx -> ctx.insert(
+                                entity,
+                                EntityRecord.builder()
+                                        .set("id", "1")
+                                        .set("name", "Initial")
+                                        .build()))
                 .down("Delete initial", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
                 .build();
 
@@ -66,20 +94,44 @@ class MigrationTest {
     void migrationWithMultipleUpDownStepsInterleaved() {
         String entity = uniqueEntity("interleaved");
         Migration migration = Migration.builder(entity + "_interleaved")
-                .upSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
-                .up("Insert A", ctx -> ctx.insert(entity, EntityRecord.builder().set("id", "a").build()))
-                .upSchema(Schema.builder().entity(entity, e -> e.string("name").field(100)).build())
-                .up("Update A name", ctx -> ctx.update(entity, Predicate.eq("id", "a"),
-                        Mutation.builder().set("name", "First").build()))
-                .up("Insert B", ctx -> ctx.insert(entity, EntityRecord.builder().set("id", "b").build()))
-                .upSchema(Schema.builder().entity(entity, e -> e.integer("score")).build())
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> e.string("id").identity().length(36))
+                        .build())
+                .up(
+                        "Insert A",
+                        ctx -> ctx.insert(
+                                entity, EntityRecord.builder().set("id", "a").build()))
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> e.string("name").length(100))
+                        .build())
+                .up(
+                        "Update A name",
+                        ctx -> ctx.update(
+                                entity,
+                                Predicate.eq("id", "a"),
+                                Mutation.builder().set("name", "First").build()))
+                .up(
+                        "Insert B",
+                        ctx -> ctx.insert(
+                                entity, EntityRecord.builder().set("id", "b").build()))
+                .upSchema(
+                        Schema.builder().entity(entity, e -> e.integer("score")).build())
                 .down("Delete B", ctx -> ctx.delete(entity, Predicate.eq("id", "b")))
-                .downSchema(Schema.builder().entity(entity, e -> e.integer("score")).build())
-                .down("Clear A name", ctx -> ctx.update(entity, Predicate.eq("id", "a"),
-                        Mutation.builder().set("name", null).build()))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("name").field(100)).build())
+                .downSchema(
+                        Schema.builder().entity(entity, e -> e.integer("score")).build())
+                .down(
+                        "Clear A name",
+                        ctx -> ctx.update(
+                                entity,
+                                Predicate.eq("id", "a"),
+                                Mutation.builder().set("name", null).build()))
+                .downSchema(Schema.builder()
+                        .entity(entity, e -> e.string("name").length(100))
+                        .build())
                 .down("Delete A", ctx -> ctx.delete(entity, Predicate.eq("id", "a")))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
+                .downSchema(Schema.builder()
+                        .entity(entity, e -> e.string("id").identity().length(36))
+                        .build())
                 .build();
 
         try (Tava tava = openTava(entity)) {
@@ -88,8 +140,14 @@ class MigrationTest {
             var records = tava.records(entity).find(Query.all()).items();
             assertEquals(2, records.size());
             // Both records exist, but only "a" has name set
-            var recordA = records.stream().filter(r -> "a".equals(r.get("id"))).findFirst().orElseThrow();
-            var recordB = records.stream().filter(r -> "b".equals(r.get("id"))).findFirst().orElseThrow();
+            var recordA = records.stream()
+                    .filter(r -> "a".equals(r.get("id")))
+                    .findFirst()
+                    .orElseThrow();
+            var recordB = records.stream()
+                    .filter(r -> "b".equals(r.get("id")))
+                    .findFirst()
+                    .orElseThrow();
             assertEquals("First", recordA.get("name"));
             assertNull(recordA.get("score"));
             assertNull(recordB.get("name"));
@@ -105,22 +163,38 @@ class MigrationTest {
     void migrationFailureLeavesPartialDataWithoutRecordingAppliedMigration() {
         String entity = uniqueEntity("failup");
         Migration migration = Migration.builder(entity + "_fail_up")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert first", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "First").build()))
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("name").required().length(100);
+                        })
+                        .build())
+                .up(
+                        "Insert first",
+                        ctx -> ctx.insert(
+                                entity,
+                                EntityRecord.builder()
+                                        .set("id", "1")
+                                        .set("name", "First")
+                                        .build()))
                 .up("Fail on second", ctx -> {
                     throw new RuntimeException("Simulated failure");
                 })
-                .up("Never reached", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "2").set("name", "Second").build()))
+                .up(
+                        "Never reached",
+                        ctx -> ctx.insert(
+                                entity,
+                                EntityRecord.builder()
+                                        .set("id", "2")
+                                        .set("name", "Second")
+                                        .build()))
                 .down("Delete first", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
-                .downSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
+                .downSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("name").required().length(100);
+                        })
+                        .build())
                 .build();
 
         try (Tava tava = openTava(entity)) {
@@ -129,7 +203,9 @@ class MigrationTest {
             assertTrue(tava.migrations().applied().isEmpty());
             // Partial changes are committed (no automatic transaction rollback)
             assertEquals(1, tava.records(entity).find(Query.all()).items().size());
-            assertEquals("First", tava.records(entity).find(Query.all()).items().getFirst().get("name"));
+            assertEquals(
+                    "First",
+                    tava.records(entity).find(Query.all()).items().getFirst().get("name"));
         }
     }
 
@@ -138,16 +214,30 @@ class MigrationTest {
         String entity = uniqueEntity("schema_data");
         Migration migration = Migration.builder(entity + "_schema_data")
                 .up("Create table and seed data", ctx -> {
-                    ctx.apply("Create entity", Schema.builder().entity(entity, e -> {
-                        e.string("id").identity().field(36);
-                        e.string("email").required().field(255);
-                        e.integer("score").required();
-                    }).build());
+                    ctx.apply(
+                            "Create entity",
+                            Schema.builder()
+                                    .entity(entity, e -> {
+                                        e.string("id").identity().length(36);
+                                        e.string("email").required().length(255);
+                                        e.integer("score").required();
+                                    })
+                                    .build());
 
-                    ctx.insert(entity, EntityRecord.builder()
-                            .set("id", "1").set("email", "a@b.com").set("score", 10).build());
-                    ctx.insert(entity, EntityRecord.builder()
-                            .set("id", "2").set("email", "c@d.com").set("score", 20).build());
+                    ctx.insert(
+                            entity,
+                            EntityRecord.builder()
+                                    .set("id", "1")
+                                    .set("email", "a@b.com")
+                                    .set("score", 10)
+                                    .build());
+                    ctx.insert(
+                            entity,
+                            EntityRecord.builder()
+                                    .set("id", "2")
+                                    .set("email", "c@d.com")
+                                    .set("score", 20)
+                                    .build());
                 })
                 .down("Delete all data", ctx -> ctx.delete(entity, Predicate.all()))
                 .build();
@@ -155,9 +245,12 @@ class MigrationTest {
         try (Tava tava = openTava(entity)) {
             MigrationResult result = tava.migrations().apply(migration).getFirst();
             assertTrue(result.applied());
-            assertEquals(2, result.operations().stream()
-                    .filter(op -> op.description().startsWith("Insert into " + entity))
-                    .mapToLong(MigrationOperationResult::affectedRows).sum());
+            assertEquals(
+                    2,
+                    result.operations().stream()
+                            .filter(op -> op.description().startsWith("Insert into " + entity))
+                            .mapToLong(MigrationOperationResult::affectedRows)
+                            .sum());
 
             var records = tava.records(entity).find(Query.all()).items();
             assertEquals(2, records.size());
@@ -172,12 +265,20 @@ class MigrationTest {
     void migrationRollbackWhenDownStepFails() {
         String entity = uniqueEntity("faildown");
         Migration migration = Migration.builder(entity + "_fail_down")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "Test").build()))
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("name").required().length(100);
+                        })
+                        .build())
+                .up(
+                        "Insert",
+                        ctx -> ctx.insert(
+                                entity,
+                                EntityRecord.builder()
+                                        .set("id", "1")
+                                        .set("name", "Test")
+                                        .build()))
                 .down("Fail on rollback", ctx -> {
                     throw new RuntimeException("Rollback failure");
                 })
@@ -198,31 +299,60 @@ class MigrationTest {
     void multipleMigrationsAppliedInSequenceWithDependencies() {
         String entity = uniqueEntity("deps");
         Migration m1 = Migration.builder(entity + "_m1")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("base").required().field(50);
-                }).build())
-                .up("Insert base", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("base", "base1").build()))
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("base").required().length(50);
+                        })
+                        .build())
+                .up(
+                        "Insert base",
+                        ctx -> ctx.insert(
+                                entity,
+                                EntityRecord.builder()
+                                        .set("id", "1")
+                                        .set("base", "base1")
+                                        .build()))
                 .down("Delete base", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
-                .downSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("base").required().field(50);
-                }).build())
+                .downSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("base").required().length(50);
+                        })
+                        .build())
                 .build();
 
         Migration m2 = Migration.builder(entity + "_m2")
-                .upSchema(Schema.builder().entity(entity, e -> e.string("extra").field(100)).build())
-                .up("Update base", ctx -> ctx.update(entity, Predicate.eq("id", "1"),
-                        Mutation.builder().set("extra", "extra1").build()))
-                .down("Clear extra", ctx -> ctx.update(entity, Predicate.eq("id", "1"),
-                        Mutation.builder().set("extra", null).build()))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("extra").field(100)).build())
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> e.string("extra").length(100))
+                        .build())
+                .up(
+                        "Update base",
+                        ctx -> ctx.update(
+                                entity,
+                                Predicate.eq("id", "1"),
+                                Mutation.builder().set("extra", "extra1").build()))
+                .down(
+                        "Clear extra",
+                        ctx -> ctx.update(
+                                entity,
+                                Predicate.eq("id", "1"),
+                                Mutation.builder().set("extra", null).build()))
+                .downSchema(Schema.builder()
+                        .entity(entity, e -> e.string("extra").length(100))
+                        .build())
                 .build();
 
         Migration m3 = Migration.builder(entity + "_m3")
-                .up("Add derived", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "2").set("base", "base2").set("extra", "extra2").build()))
+                .up(
+                        "Add derived",
+                        ctx -> ctx.insert(
+                                entity,
+                                EntityRecord.builder()
+                                        .set("id", "2")
+                                        .set("base", "base2")
+                                        .set("extra", "extra2")
+                                        .build()))
                 .down("Delete derived", ctx -> ctx.delete(entity, Predicate.eq("id", "2")))
                 .build();
 
@@ -249,21 +379,31 @@ class MigrationTest {
     @Test
     void migrationWithEmptyUpStepsThrows() {
         String entity = uniqueEntity("emptyup");
-        assertThrows(IllegalArgumentException.class, () -> Migration.builder(entity + "_empty_up")
-                .down("Delete", ctx -> ctx.delete(entity, Predicate.all()))
-                .build());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Migration.builder(entity + "_empty_up")
+                        .down("Delete", ctx -> ctx.delete(entity, Predicate.all()))
+                        .build());
     }
 
     @Test
     void migrationWithEmptyDownStepsAllowsIrreversible() {
         String entity = uniqueEntity("emptydown");
         Migration migration = Migration.builder(entity + "_empty_down")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "Test").build()))
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("name").required().length(100);
+                        })
+                        .build())
+                .up(
+                        "Insert",
+                        ctx -> ctx.insert(
+                                entity,
+                                EntityRecord.builder()
+                                        .set("id", "1")
+                                        .set("name", "Test")
+                                        .build()))
                 .build();
 
         try (Tava tava = openTava(entity)) {
@@ -278,17 +418,27 @@ class MigrationTest {
     void migrationAppliedRolledBackMultipleTimes() {
         String entity = uniqueEntity("multi");
         Migration migration = Migration.builder(entity + "_multi")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "Test").build()))
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("name").required().length(100);
+                        })
+                        .build())
+                .up(
+                        "Insert",
+                        ctx -> ctx.insert(
+                                entity,
+                                EntityRecord.builder()
+                                        .set("id", "1")
+                                        .set("name", "Test")
+                                        .build()))
                 .down("Delete", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
-                .downSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
+                .downSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("name").required().length(100);
+                        })
+                        .build())
                 .build();
 
         try (Tava tava = openTava(entity)) {
@@ -313,19 +463,32 @@ class MigrationTest {
     void pendingMigrationsDetectionWithGaps() {
         String entity = uniqueEntity("gaps");
         Migration m1 = Migration.builder(entity + "_m1")
-                .upSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
-                .up("Insert 1", ctx -> ctx.insert(entity, EntityRecord.builder().set("id", "1").build()))
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> e.string("id").identity().length(36))
+                        .build())
+                .up(
+                        "Insert 1",
+                        ctx -> ctx.insert(
+                                entity, EntityRecord.builder().set("id", "1").build()))
                 .down("Delete 1", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
+                .downSchema(Schema.builder()
+                        .entity(entity, e -> e.string("id").identity().length(36))
+                        .build())
                 .build();
 
         Migration m2 = Migration.builder(entity + "_m2")
-                .up("Insert 2", ctx -> ctx.insert(entity, EntityRecord.builder().set("id", "2").build()))
+                .up(
+                        "Insert 2",
+                        ctx -> ctx.insert(
+                                entity, EntityRecord.builder().set("id", "2").build()))
                 .down("Delete 2", ctx -> ctx.delete(entity, Predicate.eq("id", "2")))
                 .build();
 
         Migration m3 = Migration.builder(entity + "_m3")
-                .up("Insert 3", ctx -> ctx.insert(entity, EntityRecord.builder().set("id", "3").build()))
+                .up(
+                        "Insert 3",
+                        ctx -> ctx.insert(
+                                entity, EntityRecord.builder().set("id", "3").build()))
                 .down("Delete 3", ctx -> ctx.delete(entity, Predicate.eq("id", "3")))
                 .build();
 
@@ -343,25 +506,46 @@ class MigrationTest {
     void migrationIdCollisionHandling() {
         String entity = uniqueEntity("collision");
         Migration m1 = Migration.builder(entity + "_same")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert first", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "First").build()))
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("name").required().length(100);
+                        })
+                        .build())
+                .up(
+                        "Insert first",
+                        ctx -> ctx.insert(
+                                entity,
+                                EntityRecord.builder()
+                                        .set("id", "1")
+                                        .set("name", "First")
+                                        .build()))
                 .down("Delete first", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
-                .downSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
+                .downSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("name").required().length(100);
+                        })
+                        .build())
                 .build();
 
         Migration m2 = Migration.builder(entity + "_same")
-                .upSchema(Schema.builder().entity(entity, e -> e.string("extra").field(100)).build())
-                .up("Insert second", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "2").set("name", "Second").set("extra", "extra").build()))
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> e.string("extra").length(100))
+                        .build())
+                .up(
+                        "Insert second",
+                        ctx -> ctx.insert(
+                                entity,
+                                EntityRecord.builder()
+                                        .set("id", "2")
+                                        .set("name", "Second")
+                                        .set("extra", "extra")
+                                        .build()))
                 .down("Delete second", ctx -> ctx.delete(entity, Predicate.eq("id", "2")))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("extra").field(100)).build())
+                .downSchema(Schema.builder()
+                        .entity(entity, e -> e.string("extra").length(100))
+                        .build())
                 .build();
 
         try (Tava tava = openTava(entity)) {
@@ -384,9 +568,13 @@ class MigrationTest {
     void rollbackNonAppliedMigrationReturnsNotApplied() {
         String entity = uniqueEntity("notapplied");
         Migration migration = Migration.builder(entity + "_not_applied")
-                .upSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> e.string("id").identity().length(36))
+                        .build())
                 .down("Delete", ctx -> ctx.delete(entity, Predicate.all()))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
+                .downSchema(Schema.builder()
+                        .entity(entity, e -> e.string("id").identity().length(36))
+                        .build())
                 .build();
 
         try (Tava tava = openTava(entity)) {
@@ -409,28 +597,61 @@ class MigrationTest {
     void migrationOperationsTrackSchemaChangesAndRowCounts() {
         String entity = uniqueEntity("ops");
         Migration migration = Migration.builder(entity + "_ops")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
+                .upSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("name").required().length(100);
+                        })
+                        .build())
                 .up("Insert multiple", ctx -> {
-                    ctx.insert(entity, EntityRecord.builder().set("id", "1").set("name", "A").build());
-                    ctx.insert(entity, EntityRecord.builder().set("id", "2").set("name", "B").build());
-                    ctx.insert(entity, EntityRecord.builder().set("id", "3").set("name", "C").build());
+                    ctx.insert(
+                            entity,
+                            EntityRecord.builder()
+                                    .set("id", "1")
+                                    .set("name", "A")
+                                    .build());
+                    ctx.insert(
+                            entity,
+                            EntityRecord.builder()
+                                    .set("id", "2")
+                                    .set("name", "B")
+                                    .build());
+                    ctx.insert(
+                            entity,
+                            EntityRecord.builder()
+                                    .set("id", "3")
+                                    .set("name", "C")
+                                    .build());
                 })
-                .upSchema(Schema.builder().entity(entity, e -> e.integer("value")).build())
-                .up("Update all", ctx -> ctx.forEach(entity, Query.all(), record ->
-                        ctx.update(entity, Predicate.eq("id", record.get("id")),
-                                Mutation.builder().set("value", 42).build())))
-                .down("Clear values", ctx -> ctx.forEach(entity, Query.all(), record ->
-                        ctx.update(entity, Predicate.eq("id", record.get("id")),
-                                Mutation.builder().set("value", null).build())))
-                .downSchema(Schema.builder().entity(entity, e -> e.integer("value")).build())
+                .upSchema(
+                        Schema.builder().entity(entity, e -> e.integer("value")).build())
+                .up(
+                        "Update all",
+                        ctx -> ctx.forEach(
+                                entity,
+                                Query.all(),
+                                record -> ctx.update(
+                                        entity,
+                                        Predicate.eq("id", record.get("id")),
+                                        Mutation.builder().set("value", 42).build())))
+                .down(
+                        "Clear values",
+                        ctx -> ctx.forEach(
+                                entity,
+                                Query.all(),
+                                record -> ctx.update(
+                                        entity,
+                                        Predicate.eq("id", record.get("id")),
+                                        Mutation.builder().set("value", null).build())))
+                .downSchema(
+                        Schema.builder().entity(entity, e -> e.integer("value")).build())
                 .down("Delete all", ctx -> ctx.delete(entity, Predicate.all()))
-                .downSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
+                .downSchema(Schema.builder()
+                        .entity(entity, e -> {
+                            e.string("id").identity().length(36);
+                            e.string("name").required().length(100);
+                        })
+                        .build())
                 .build();
 
         try (Tava tava = openTava(entity)) {
@@ -462,20 +683,38 @@ class MigrationTest {
         String entity = uniqueEntity("nested");
         Migration migration = Migration.builder(entity + "_nested")
                 .up("Complex schema change", ctx -> {
-                    ctx.apply("Create base", Schema.builder().entity(entity, e -> {
-                        e.string("id").identity().field(36);
-                        e.string("data").required().field(1000);
-                    }).build());
+                    ctx.apply(
+                            "Create base",
+                            Schema.builder()
+                                    .entity(entity, e -> {
+                                        e.string("id").identity().length(36);
+                                        e.string("data").required().length(1000);
+                                    })
+                                    .build());
 
-                    ctx.insert(entity, EntityRecord.builder()
-                            .set("id", "1").set("data", "initial").build());
+                    ctx.insert(
+                            entity,
+                            EntityRecord.builder()
+                                    .set("id", "1")
+                                    .set("data", "initial")
+                                    .build());
 
-                    ctx.apply("Add index field", Schema.builder().entity(entity, e -> e.integer("idx")).build());
+                    ctx.apply(
+                            "Add index field",
+                            Schema.builder()
+                                    .entity(entity, e -> e.integer("idx"))
+                                    .build());
 
-                    ctx.update(entity, Predicate.eq("id", "1"),
+                    ctx.update(
+                            entity,
+                            Predicate.eq("id", "1"),
                             Mutation.builder().set("idx", 1).build());
 
-                    ctx.apply("Add metadata", Schema.builder().entity(entity, e -> e.string("meta").field(50)).build());
+                    ctx.apply(
+                            "Add metadata",
+                            Schema.builder()
+                                    .entity(entity, e -> e.string("meta").length(50))
+                                    .build());
                 })
                 .down("Reverse complex change", ctx -> ctx.delete(entity, Predicate.all()))
                 .build();
@@ -499,9 +738,19 @@ class MigrationTest {
     @Test
     void migrationAppliedIdsOrderPreserved() {
         String entity = uniqueEntity("order");
-        Migration m1 = Migration.up(entity + "_1", Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build());
-        Migration m2 = Migration.up(entity + "_2", Schema.builder().entity(entity, e -> e.string("name").field(100)).build());
-        Migration m3 = Migration.up(entity + "_3", Schema.builder().entity(entity, e -> e.integer("value")).build());
+        Migration m1 = Migration.up(
+                entity + "_1",
+                Schema.builder()
+                        .entity(entity, e -> e.string("id").identity().length(36))
+                        .build());
+        Migration m2 = Migration.up(
+                entity + "_2",
+                Schema.builder()
+                        .entity(entity, e -> e.string("name").length(100))
+                        .build());
+        Migration m3 = Migration.up(
+                entity + "_3",
+                Schema.builder().entity(entity, e -> e.integer("value")).build());
 
         try (Tava tava = openTava(entity)) {
             tava.migrations().apply(m1, m2, m3);

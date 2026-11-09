@@ -1,13 +1,12 @@
 package eu.mikart.tava.schema;
 
-import eu.mikart.tava.schema.annotation.*;
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
+import eu.mikart.tava.schema.annotation.*;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 class RecordSchemasTest {
     @Test
@@ -22,11 +21,13 @@ class RecordSchemasTest {
 
     @Test
     void createsSchemaFromConsumerDsl() {
-        Schema schema = Schema.builder().entity("accounts", entity -> {
-            entity.uuid("id").identity().notNull();
-            entity.string("email").required().unique().field(255);
-            entity.integer("score");
-        }).build();
+        Schema schema = Schema.builder()
+                .entity("accounts", entity -> {
+                    entity.uuid("id").identity().notNull();
+                    entity.string("email").required().unique().length(255);
+                    entity.integer("score");
+                })
+                .build();
 
         EntityDefinition entity = schema.entity("accounts");
         assertTrue(entity.field("id").identity());
@@ -42,7 +43,7 @@ class RecordSchemasTest {
             @Required @Unique @Field(length = 200) String email,
             @Field(precision = 12, scale = 2) BigDecimal balance,
             @Generated(GeneratedValue.NOW) Instant createdAt,
-            @AdapterSetting(adapter = "postgres", key = "type", value = "JSONB") String metadata
-    ) {
-    }
+
+            @AdapterSetting(adapter = "postgres", key = "type", value = "JSONB")
+            String metadata) {}
 }
