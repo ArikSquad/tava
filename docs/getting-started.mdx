@@ -4,12 +4,12 @@ description: Install Tava, choose an adapter, define a schema, and run a small q
 icon: Rocket
 ---
 
-Tava is published as small modules. Import the BOM, add `tava-core`, then add only
-the adapters your application actually opens.
+Tava is published as small modules. Import the 1.3.0 BOM, add `tava-core`, then add
+only the adapters your application actually opens.
 
 ```kotlin title="build.gradle.kts"
 dependencies {
-    implementation(platform("eu.mikart.tava:tava-bom:1.2.2"))
+    implementation(platform("eu.mikart.tava:tava-bom:1.3.0"))
 
     implementation("eu.mikart.tava:tava-core")
     implementation("eu.mikart.tava:tava-postgres")
@@ -25,7 +25,7 @@ modules.
 
 ```kotlin tab="Gradle Kotlin"
 dependencies {
-    implementation(platform("eu.mikart.tava:tava-bom:1.2.2"))
+    implementation(platform("eu.mikart.tava:tava-bom:1.3.0"))
     implementation("eu.mikart.tava:tava-core")
     implementation("eu.mikart.tava:tava-postgres")
 }
@@ -37,7 +37,7 @@ dependencies {
     <dependency>
       <groupId>eu.mikart.tava</groupId>
       <artifactId>tava-bom</artifactId>
-      <version>1.2.2</version>
+      <version>1.3.0</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -55,6 +55,11 @@ dependencies {
   </dependency>
 </dependencies>
 ```
+
+`Tava` owns the adapter passed to `open(...)`. Close it when the work is done, as in
+the examples here. If your application needs async entity methods, provide an
+executor explicitly with `Tava.open(adapter, databaseExecutor)`; the default uses
+the common fork-join pool. Async calls are unavailable inside transactions.
 
 ## Pick An Adapter
 
@@ -166,5 +171,8 @@ var page = accounts.find(Query.builder()
   </Card>
   <Card href="schema-plans-and-migrations" title="Migrations">
     Keep production schema changes deliberate and reviewable.
+  </Card>
+  <Card href="data-transfer" title="Data transfer">
+    Copy data across adapters, including transfers that can resume after a restart.
   </Card>
 </Cards>

@@ -23,6 +23,11 @@ backend-specific.
 
 ## JDBC Adapters
 
+Connection helpers that accept a JDBC URL open and own their connections. If your
+application already manages a pool, JDBC adapters also accept a `DataSource`; Tava
+closes each borrowed connection after use but does not close the `DataSource` itself.
+This overload is available for PostgreSQL, MySQL, MariaDB, H2, Oracle, and SQL Server.
+
 ```java tab="PostgreSQL"
 try (Tava tava = Tava.open(Postgres.connect(
         "jdbc:postgresql://localhost:5432/app",
@@ -105,6 +110,11 @@ try (Tava tava = Tava.open(SqlServer.connect(
         "jdbc:sqlserver://localhost:1433;databaseName=app",
         "app",
         "secret"))) {
+    // use Tava
+}
+
+// Or pass a DataSource managed by your application:
+try (Tava tava = Tava.open(SqlServer.connect(dataSource))) {
     // use Tava
 }
 ```

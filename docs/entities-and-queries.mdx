@@ -88,10 +88,14 @@ Predicate named = Predicate.or(
 | `in(field, values)` | Field is one of several values |
 | `contains(field, value)` | Backend-supported containment |
 | `startsWith(field, value)` | Prefix matching |
+| `isNull(field)` | Field is null or absent |
+| `isNotNull(field)` | Field is present and non-null |
 | `and(...)`, `or(...)` | Junctions |
 
 `in(...)`, `and(...)`, and `or(...)` require at least one value or predicate. This
-keeps their meaning portable and prevents adapters from producing invalid native queries.
+keeps their meaning portable and prevents adapters from producing invalid native
+queries. `contains(...)` follows the backend's value semantics: it can mean a
+substring or a collection member, depending on the field and adapter.
 
 ## Sorting, Projection, And Limits
 
@@ -132,8 +136,10 @@ do {
 } while (cursor != null);
 ```
 
-Treat cursors as opaque values. A well-behaved adapter returns a different cursor for
-the next page, or `null` when paging is complete.
+Treat cursors as opaque values and pass them back with the same filter and sort. Cursors
+continue the result ordering; they are not a database snapshot. Inserts, deletes, or
+changes to sort values while paging may affect later pages. When sorting, include a
+stable unique field if your application needs repeatable ordering across runs.
 
 ## Updates And Deletes
 
@@ -173,8 +179,11 @@ tava.records("unlocked_emblems").findById(key);
 
 `upsert(record)` is one logical atomic operation. MongoDB uses a native upsert;
 JDBC adapters execute it within one transaction and retry the update if a concurrent
-insert wins. `MutationResult` reports matched rows, changed rows, conflicts, and an
-`INSERTED`, `UPDATED`, `DELETED`, `UNCHANGED`, or `CONFLICT` outcome.
+insert wins. For an explicit outcome, use `insertResult`, `updateResult`, or
+`deleteById`; `MutationResult` reports matched rows, changed rows, conflicts, and an
+`INSERTED`, `UPDATED`, `DELETED`, `UNCHANGED`, or `CONFLICT` outcome. A count of `-1`
+means the adapter cannot report that count. Conflict details are portable when the
+adapter can identify them.
 
 Use `insertIfAbsent(record)` when an existing unique key is expected rather than
 exceptional. A conflict result contains portable `ConflictDetail` entries (kind,
@@ -193,18 +202,23 @@ static final FieldRef<Collection<UUID>> EMBLEMS = FieldRef.of("emblems", (Class)
 Mutation mutation = Mutation.builder()
         .increment(SCORE, 1)
         .appendIfAbsent(EMBLEMS, emblemId)
+        .remove(EMBLEMS, retiredEmblemId)
         .build();
 ```
 
 `increment`, `appendIfAbsent`, and `remove` are database-side operations. MongoDB maps
 collection additions to `$addToSet`; SQLite uses JSON operations. Unsupported
 operators throw `TavaException.Capability`; they never silently fall back to a
-read-modify-write sequence.
+read-modify-write sequence. The old `append(...)` builder method remains as a
+deprecated alias for `appendIfAbsent(...)`.
 
 ## Transactions and asynchronous calls
 
 Callback transactions commit when the callback returns and roll back when it throws.
-They are implemented by JDBC and MongoDB adapters:
+They are implemented by JDBC and MongoDB adapters. The transaction-scoped `Tava`
+handle is valid only on the callback thread, only until the callback returns; nested
+transactions, schema changes, native access, and async calls are unavailable inside
+the callback:
 
 ```java
 tava.transaction(tx -> {
@@ -216,8 +230,10 @@ tava.transaction(tx -> {
 
 Synchronous I/O entry points carry `@Blocking`. Async methods such as
 `findByIdAsync`, `insertAsync`, and `upsertAsync` use the executor supplied to
-`Tava.open(adapter, executor)`. Server and game applications should provide a
-dedicated database executor rather than use their main/event-loop thread.
+`Tava.open(adapter, executor)`; `Tava.open(adapter)` uses the common fork-join pool.
+Server and game applications should provide a dedicated database executor rather
+than use their main/event-loop thread. Closing `Tava` waits for active operations to
+finish and closes its adapter. Do not close it from inside an active operation.
 
 ## Value mapping and errors
 
@@ -226,7 +242,7 @@ natively. Typed enum collections are recursively converted as well; JDBC stores
 collections and maps as JSON while document adapters retain native collection values.
 `ValueCodecs.enumName(...)`, `list(...)`, and `set(...)` are available for reusable
 custom mappings. Nested records map as embedded documents. Add
-`@MappedWith(MyCodec.class)` to a component for custom encoding. All public failures derive from `TavaException`;
-the `Capability`, `Schema`, `Mapping`, `Data`, `Conflict`, `Connection`, and
-`Transaction` subtypes let applications handle failures consistently without
-depending on `SQLException`.
+`@MappedWith(MyCodec.class)` to a component for custom encoding. All public failures
+derive from `TavaException`; its `Capability`, `Schema`, `Mapping`, `Data`, `Conflict`,
+`Connection`, and `Transaction` subtypes let applications handle failures consistently
+without depending on `SQLException`.

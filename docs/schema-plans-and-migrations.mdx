@@ -19,6 +19,14 @@ for (SchemaChange change : plan.changes()) {
 plan.apply();
 ```
 
+Planning is read-only: inspect the changes before calling `apply()`. `tava.plan(schema)`
+plans changes needed to reach the desired schema while leaving unrelated storage alone.
+Use `tava.planExact(schema)` when the desired schema is the complete inventory for the
+namespace. Exact planning also reports entities, fields, and indexes missing from the
+desired schema. Current adapters mark those removals `UNSUPPORTED`, so they are visible
+in the plan but are not applied. Exact planning is available only on adapters that
+implement it: JDBC, MongoDB, and DynamoDB in 1.3.0.
+
 ## Risk Levels
 
 | Risk | Default behavior |
@@ -32,8 +40,9 @@ plan.apply();
 import eu.mikart.tava.schema.plan.ApplyOptions;
 
 plan.apply(ApplyOptions.safe());
-plan.apply(new ApplyOptions(true, false));  // allow lossy
-plan.apply(new ApplyOptions(true, true));   // allow lossy and destructive
+plan.apply(new ApplyOptions(true, false));  // allow lossy changes
+plan.apply(new ApplyOptions(false, true));  // allow destructive changes
+plan.apply(new ApplyOptions(true, true));   // allow both
 ```
 
 ## Adopt Renamed JDBC Schemas
@@ -120,12 +129,46 @@ tava.migrations().rollback(migration);
 
 If a migration has no down schema or down action, `rollback(...)` rejects it.
 
-## Inspect State
+## Inspect and Recover Migration State
 
 ```java title="MigrationState.java"
 List<String> applied = tava.migrations().applied();
 List<Migration> pending = tava.migrations().pending(allMigrations);
 ```
+
+In 1.3.0 the journal records each migration's direction, state, checksum, and completed
+step count. Inspect an interrupted migration before resuming it:
+
+```java title="RecoverMigration.java"
+var migrations = tava.migrations();
+MigrationStatus status = migrations.status(migration.id()).orElseThrow();
+
+if (status.state() == MigrationStatus.State.FAILED
+        || status.state() == MigrationStatus.State.RUNNING) {
+    migrations.resume(migration, Migrations.Recovery.RETRY_INCOMPLETE_STEP);
+}
+```
+
+`RETRY_INCOMPLETE_STEP` reruns the step that was active when the process stopped;
+`SKIP_INCOMPLETE_STEP` treats that step as complete and continues. Choose based on the
+step's side effects: a step may have changed data before the process failed. Make
+retriable actions idempotent where possible. Keep migration IDs stable and do not edit
+an applied migration. An optional checksum lets Tava reject a changed definition:
+
+```java
+Migration migration = Migration.builder("2026-03-04-add-account-status")
+        .checksum(generatedMigrationDigest)
+        .upSchema(schemaWithStatus)
+        .build();
+```
+
+Only set a checksum that stays identical for the same migration content.
+
+Migrations are protected by a durable lock. If a process dies and leaves a lock behind,
+`migrations.lock()` shows its owner token. Verify that the original migration process
+has stopped before releasing that exact lock with `migrations.releaseLock(lockInfo)`;
+locks do not expire automatically. This is an operator recovery action, not a routine
+cleanup step.
 
 <Cards>
   <Card href="schema" title="Schema">
