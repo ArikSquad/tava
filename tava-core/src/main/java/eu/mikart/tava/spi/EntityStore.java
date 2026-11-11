@@ -7,8 +7,10 @@ import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
+import eu.mikart.tava.query.Pages;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
+import eu.mikart.tava.query.QueryDiagnostics;
 import java.util.List;
 import org.jetbrains.annotations.NotNull;
 
@@ -29,7 +31,8 @@ public interface EntityStore {
      * Inserts records in input order.
      *
      * <p>The default implementation inserts one record at a time and may leave earlier records stored if a later insert
-     * fails.
+     * fails. Adapters declaring {@code ATOMIC_BULK_WRITE} roll back the entire batch on failure; their
+     * {@code BULK_WRITE.batchSize} capability, when present, limits the atomic batch size.
      *
      * @param entity entity name
      * @param records records to insert
@@ -50,6 +53,48 @@ public interface EntityStore {
      */
     @NotNull
     Page<EntityRecord> find(@NotNull String entity, @NotNull Query query);
+
+    /**
+     * Counts matching records. Adapters should override this fallback with server-side counting.
+     *
+     * @param entity entity name
+     * @param predicate matching condition
+     * @return matching record count
+     * @since 1.3.0
+     */
+    default long count(String entity, Predicate predicate) {
+        try (var stream = Pages.stream(Query.builder().where(predicate).build(), query -> find(entity, query))) {
+            return stream.count();
+        }
+    }
+
+    /**
+     * Checks for a match, following empty filtered pages when necessary.
+     *
+     * @param entity entity name
+     * @param predicate matching condition
+     * @return whether a match exists
+     * @since 1.3.0
+     */
+    default boolean exists(String entity, Predicate predicate) {
+        try (var stream =
+                Pages.stream(Query.builder().where(predicate).limit(1).build(), query -> find(entity, query))) {
+            return stream.findFirst().isPresent();
+        }
+    }
+
+    /**
+     * Describes portable query planning without executing the query.
+     *
+     * @param entity entity name
+     * @param query query to inspect
+     * @return adapter access-path information
+     * @since 1.3.0
+     */
+    default QueryDiagnostics explain(String entity, Query query) {
+        return new QueryDiagnostics(
+                "unspecified", query.sorting(), false, "Adapter does not expose access-path diagnostics");
+    }
 
     /**
      * Applies a mutation to records matching a predicate.

@@ -8,6 +8,7 @@ import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.plan.ApplyOptions;
+import eu.mikart.tava.spi.OperationContext;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -56,6 +57,13 @@ public final class DataTransfer {
     public static TransferReport copy(
             Tava source, Tava target, Schema schema, TransferOptions options, TransferControl control) {
         Objects.requireNonNull(control, "control");
+        try (OperationContext context = OperationContext.open(control.timeout(), control.cancelled())) {
+            return copyControlled(source, target, schema, options, control);
+        }
+    }
+
+    private static TransferReport copyControlled(
+            Tava source, Tava target, Schema schema, TransferOptions options, TransferControl control) {
         long started = System.nanoTime();
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(target, "target");

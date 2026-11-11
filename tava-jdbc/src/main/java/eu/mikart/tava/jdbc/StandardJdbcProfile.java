@@ -104,7 +104,8 @@ public class StandardJdbcProfile implements JdbcProfile {
                         Feature.JSON,
                         Feature.BINARY,
                         Feature.BULK_READ,
-                        Feature.BULK_WRITE)
+                        Feature.BULK_WRITE,
+                        Feature.ATOMIC_BULK_WRITE)
                 .set(
                         Feature.FOREIGN_KEYS,
                         SupportLevel.NATIVE_ONLY,

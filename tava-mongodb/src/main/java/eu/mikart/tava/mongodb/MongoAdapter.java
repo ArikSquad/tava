@@ -24,6 +24,7 @@ import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
+import eu.mikart.tava.query.QueryDiagnostics;
 import eu.mikart.tava.query.Sort;
 import eu.mikart.tava.schema.*;
 import eu.mikart.tava.schema.plan.ChangeRisk;
@@ -83,7 +84,8 @@ final class MongoAdapter implements Adapter {
                         Feature.GENERATED_VALUES,
                         Feature.JSON,
                         Feature.BINARY,
-                        Feature.BULK_READ)
+                        Feature.BULK_READ,
+                        Feature.ATOMIC_BULK_WRITE)
                 .set(
                         Feature.BULK_WRITE,
                         SupportLevel.SUPPORTED,
@@ -142,7 +144,9 @@ final class MongoAdapter implements Adapter {
     }
 
     private MongoCollection<Document> collection(String name) {
-        return database.getCollection(name);
+        MongoCollection<Document> collection = database.getCollection(name);
+        long remaining = OperationContext.remainingNanos();
+        return remaining == 0 ? collection : collection.withTimeout(remaining, TimeUnit.NANOSECONDS);
     }
 
     private final class Store implements EntityStore {
@@ -212,6 +216,30 @@ final class MongoAdapter implements Adapter {
         }
 
         @Override
+        public long count(String entity, Predicate predicate) {
+            return session == null
+                    ? collection(entity).countDocuments(filter(predicate))
+                    : collection(entity).countDocuments(session, filter(predicate));
+        }
+
+        @Override
+        public boolean exists(String entity, Predicate predicate) {
+            var result = session == null
+                    ? collection(entity).find(filter(predicate))
+                    : collection(entity).find(session, filter(predicate));
+            return result.projection(new Document("_id", 1)).limit(1).first() != null;
+        }
+
+        @Override
+        public QueryDiagnostics explain(String entity, Query query) {
+            return new QueryDiagnostics(
+                    "mongodb-keyset",
+                    KeysetPagination.ordering(query.sorting(), List.of("_id")),
+                    false,
+                    "MongoDB selects indexes; use native explain for the optimizer plan");
+        }
+
+        @Override
         public @NotNull Page<EntityRecord> find(@NotNull String entity, @NotNull Query query) {
             List<Sort> order = KeysetPagination.ordering(query.sorting(), List.of("_id"));
             for (var sort : order) {
@@ -253,7 +281,7 @@ final class MongoAdapter implements Adapter {
             }
             Document sort = new Document();
             order.forEach(value -> sort.append(value.field(), value.direction() == Sort.Direction.ASC ? 1 : -1));
-            int requested = query.limit() == 0 ? 500 : query.limit();
+            int requested = query.limit() == 0 ? OperationContext.options().defaultPageSize() : query.limit();
             List<Document> documents = result.sort(sort).limit(requested + 1).into(new ArrayList<>());
             boolean more = documents.size() > requested;
             if (more) documents.removeLast();

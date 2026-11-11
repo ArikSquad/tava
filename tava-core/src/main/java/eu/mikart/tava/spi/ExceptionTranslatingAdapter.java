@@ -7,6 +7,7 @@ import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
+import eu.mikart.tava.query.QueryDiagnostics;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.SchemaRenames;
 import eu.mikart.tava.schema.plan.SchemaPlan;
@@ -48,6 +49,18 @@ public final class ExceptionTranslatingAdapter implements Adapter {
 
     private EntityStore store(EntityStore store) {
         return new EntityStore() {
+            public long count(String entity, Predicate predicate) {
+                return call(() -> store.count(entity, predicate));
+            }
+
+            public boolean exists(String entity, Predicate predicate) {
+                return call(() -> store.exists(entity, predicate));
+            }
+
+            public QueryDiagnostics explain(String entity, Query query) {
+                return call(() -> store.explain(entity, query));
+            }
+
             public EntityRecord insert(String entity, EntityRecord record) {
                 return call(() -> store.insert(entity, record));
             }

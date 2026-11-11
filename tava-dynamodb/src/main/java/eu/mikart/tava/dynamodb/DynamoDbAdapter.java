@@ -9,6 +9,7 @@ import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
+import eu.mikart.tava.query.QueryDiagnostics;
 import eu.mikart.tava.query.Sort;
 import eu.mikart.tava.schema.*;
 import eu.mikart.tava.schema.plan.*;
@@ -18,11 +19,16 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import org.jetbrains.annotations.NotNull;
+import software.amazon.awssdk.awscore.AwsRequest;
+import software.amazon.awssdk.awscore.AwsRequestOverrideConfiguration;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
@@ -46,7 +52,29 @@ final class DynamoDbAdapter implements Adapter {
     }
 
     DynamoDbAdapter(DynamoDbClient client, boolean owned, boolean consistentRead) {
-        this.client = Objects.requireNonNull(client);
+        Objects.requireNonNull(client);
+        this.client = (DynamoDbClient) Proxy.newProxyInstance(
+                DynamoDbClient.class.getClassLoader(), new Class<?>[] {DynamoDbClient.class}, (proxy, method, args) -> {
+                    long remaining = OperationContext.remainingNanos();
+                    if (remaining > 0 && args != null && args.length == 1 && args[0] instanceof AwsRequest request) {
+                        var configuration = request.overrideConfiguration()
+                                .map(AwsRequestOverrideConfiguration::toBuilder)
+                                .orElseGet(AwsRequestOverrideConfiguration::builder);
+                        Duration timeout = request.overrideConfiguration()
+                                .flatMap(AwsRequestOverrideConfiguration::apiCallTimeout)
+                                .filter(value -> value.toNanos() < remaining)
+                                .orElse(Duration.ofNanos(remaining));
+                        configuration.apiCallTimeout(timeout);
+                        args[0] = request.toBuilder()
+                                .overrideConfiguration(configuration.build())
+                                .build();
+                    }
+                    try {
+                        return method.invoke(client, args);
+                    } catch (InvocationTargetException failure) {
+                        throw failure.getCause();
+                    }
+                });
         this.owned = owned;
         this.consistentRead = consistentRead;
     }
@@ -66,7 +94,8 @@ final class DynamoDbAdapter implements Adapter {
                         Feature.JSON,
                         Feature.BINARY,
                         Feature.BULK_READ,
-                        Feature.BULK_WRITE)
+                        Feature.BULK_WRITE,
+                        Feature.ATOMIC_BULK_WRITE)
                 .set(Feature.TTL, SupportLevel.NATIVE_ONLY, "Configure TTL through DynamoDbClient")
                 .set(Feature.GENERATED_VALUES, SupportLevel.NATIVE_ONLY, "Provide generated values in the application")
                 .set(
@@ -112,7 +141,31 @@ final class DynamoDbAdapter implements Adapter {
         if (owned) client.close();
     }
 
+    private static void metrics(int evaluated, int returned, ConsumedCapacity capacity) {
+        OperationContext.metric("evaluatedRecords", evaluated);
+        OperationContext.metric("returnedRecords", returned);
+        if (capacity != null && capacity.capacityUnits() != null)
+            OperationContext.metric("consumedCapacity", capacity.capacityUnits());
+    }
+
     private final class Store implements EntityStore {
+        private final ThreadLocal<Long> counting = new ThreadLocal<>();
+
+        private long countMatching(String entity, Predicate predicate) {
+            counting.set(0L);
+            try {
+                String cursor = null;
+                do {
+                    Query query =
+                            Query.builder().where(predicate).cursor(cursor).build();
+                    cursor = find(entity, query).nextCursor();
+                } while (cursor != null);
+                return counting.get();
+            } finally {
+                counting.remove();
+            }
+        }
+
         @Override
         public @NotNull List<EntityRecord> insert(@NotNull String entity, @NotNull List<EntityRecord> records) {
             if (records.isEmpty()) return List.of();
@@ -177,6 +230,49 @@ final class DynamoDbAdapter implements Adapter {
         }
 
         @Override
+        public QueryDiagnostics explain(String entity, Query query) {
+            EntityDefinition definition = definition(entity);
+            String partition = partitionKey(definition).name();
+            FieldDefinition sort = sortKey(definition);
+            QueryAccess access = queryAccess(query.predicate(), partition, sort == null ? null : sort.name());
+            boolean scan = access == null;
+            return new QueryDiagnostics(
+                    scan ? "dynamodb-scan" : "dynamodb-query",
+                    scan || sort == null ? List.of() : List.of(Sort.asc(sort.name())),
+                    scan,
+                    scan
+                            ? "Evaluates table records before filtering; scan policy applies on execution"
+                            : "Partition-key access with optional sort-key condition");
+        }
+
+        @Override
+        public boolean exists(String entity, Predicate predicate) {
+            counting.set(0L);
+            try {
+                String cursor = null;
+                do {
+                    cursor = find(
+                                    entity,
+                                    Query.builder()
+                                            .where(predicate)
+                                            .limit(1)
+                                            .cursor(cursor)
+                                            .build())
+                            .nextCursor();
+                    if (counting.get() > 0) return true;
+                } while (cursor != null);
+                return false;
+            } finally {
+                counting.remove();
+            }
+        }
+
+        @Override
+        public long count(String entity, Predicate predicate) {
+            return countMatching(entity, predicate);
+        }
+
+        @Override
         public @NotNull Page<EntityRecord> find(@NotNull String entity, @NotNull Query query) {
             if (!query.sorting().isEmpty())
                 throw new TavaException.Capability("DynamoDB portable queries do not support sorting");
@@ -188,11 +284,14 @@ final class DynamoDbAdapter implements Adapter {
                 if (access != null)
                     return query(entity, query, partitionField, sort == null ? null : sort.name(), access);
             }
+            if (!OperationContext.options().allowScans())
+                throw new TavaException.Capability("DynamoDB scan rejected by operation policy");
+            OperationContext.metric("scan", 1);
             Expression expression = expression(query.predicate());
             ScanRequest.Builder request = ScanRequest.builder()
                     .tableName(entity)
                     .consistentRead(consistentRead)
-                    .limit(query.limit() == 0 ? 500 : query.limit());
+                    .limit(query.limit() == 0 ? OperationContext.options().defaultPageSize() : query.limit());
             if (expression.text != null) {
                 request.filterExpression(expression.text).expressionAttributeNames(expression.names);
                 if (!expression.values.isEmpty()) request.expressionAttributeValues(expression.values);
@@ -208,7 +307,11 @@ final class DynamoDbAdapter implements Adapter {
                 request.projectionExpression(String.join(",", projected)).expressionAttributeNames(names);
             }
             if (query.cursor() != null) request.exclusiveStartKey(decodeCursor(query.cursor(), entity, query, "scan"));
+            request.returnConsumedCapacity(ReturnConsumedCapacity.TOTAL);
+            if (counting.get() != null) request.select(Select.COUNT);
             ScanResponse response = client.scan(request.build());
+            metrics(response.scannedCount(), response.count(), response.consumedCapacity());
+            if (counting.get() != null) counting.set(counting.get() + response.count());
             return new Page<>(
                     response.items().stream().map(this::decode).toList(),
                     response.lastEvaluatedKey().isEmpty()
@@ -251,7 +354,7 @@ final class DynamoDbAdapter implements Adapter {
                     .keyConditionExpression(keyCondition.toString())
                     .expressionAttributeNames(names)
                     .expressionAttributeValues(values)
-                    .limit(query.limit() == 0 ? 500 : query.limit());
+                    .limit(query.limit() == 0 ? OperationContext.options().defaultPageSize() : query.limit());
             if (filter.text() != null) request.filterExpression(filter.text());
             if (!query.projection().isEmpty()) {
                 final List<String> projected =
@@ -265,7 +368,11 @@ final class DynamoDbAdapter implements Adapter {
             }
             request.expressionAttributeNames(names).expressionAttributeValues(values);
             if (query.cursor() != null) request.exclusiveStartKey(decodeCursor(query.cursor(), entity, query, "query"));
+            request.returnConsumedCapacity(ReturnConsumedCapacity.TOTAL);
+            if (counting.get() != null) request.select(Select.COUNT);
             final QueryResponse response = client.query(request.build());
+            metrics(response.scannedCount(), response.count(), response.consumedCapacity());
+            if (counting.get() != null) counting.set(counting.get() + response.count());
             return new Page<>(
                     response.items().stream().map(this::decode).toList(),
                     response.lastEvaluatedKey().isEmpty()

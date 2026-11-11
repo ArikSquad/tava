@@ -20,6 +20,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -300,6 +301,11 @@ final class RecordMapper<T extends Record> {
             case Object o when target == String.class -> o.toString();
             case Object o when target == UUID.class -> UUID.fromString(o.toString());
             case Timestamp timestamp when target == Instant.class -> timestamp.toInstant();
+            case Timestamp timestamp when target == LocalDateTime.class -> timestamp.toLocalDateTime();
+            // SQLite CURRENT_TIMESTAMP returns UTC text with a space separator and no offset.
+            case String text
+            when target == Instant.class && text.length() >= 19 && text.charAt(10) == ' ' ->
+                LocalDateTime.parse(text.replace(' ', 'T')).toInstant(ZoneOffset.UTC);
             case Object o when target == Instant.class -> Instant.parse(o.toString());
             case Object o when target == OffsetDateTime.class -> OffsetDateTime.parse(o.toString());
             case Object o when target == LocalDate.class -> LocalDate.parse(o.toString());

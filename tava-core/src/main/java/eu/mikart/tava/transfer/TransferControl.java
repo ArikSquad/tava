@@ -5,11 +5,11 @@ import java.util.Objects;
 import java.util.function.BooleanSupplier;
 
 /**
- * Cooperative transfer cancellation and memory limits. Checks run between driver calls; configure driver timeouts
- * separately to bound an individual database call.
+ * Transfer cancellation, deadlines, and memory limits. Active calls are interrupted and adapters apply driver deadlines
+ * or statement cancellation when available. Configure driver connection and socket timeouts as well.
  *
  * @param timeout maximum elapsed time per copy invocation, or zero for no deadline
- * @param cancelled application cancellation signal
+ * @param cancelled thread-safe application cancellation signal
  * @param maxIssues maximum retained diagnostics, including a truncation notice
  * @param maxTrackedCursors maximum distinct cursors per entity before stopping safely
  * @since 1.3.0

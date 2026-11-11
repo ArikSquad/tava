@@ -12,6 +12,7 @@ import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.EntityDefinition;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.plan.ApplyOptions;
+import eu.mikart.tava.spi.OperationContext;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -88,6 +89,19 @@ public final class ResumableTransfer {
             TransferCheckpointStore checkpoints,
             TransferControl control) {
         Objects.requireNonNull(control, "control");
+        try (OperationContext context = OperationContext.open(control.timeout(), control.cancelled())) {
+            return copyControlled(source, target, schema, options, transferId, checkpoints, control);
+        }
+    }
+
+    private static TransferReport copyControlled(
+            Tava source,
+            Tava target,
+            Schema schema,
+            TransferOptions options,
+            String transferId,
+            TransferCheckpointStore checkpoints,
+            TransferControl control) {
         long started = System.nanoTime();
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(target, "target");

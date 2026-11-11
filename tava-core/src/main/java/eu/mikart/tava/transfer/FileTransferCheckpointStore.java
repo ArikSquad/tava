@@ -178,6 +178,7 @@ public final class FileTransferCheckpointStore implements TransferCheckpointStor
                         output.write(cursor);
                     }
                     output.writeBoolean(value.complete());
+                    if (value.counts().size() > 100000) throw new IOException("Too many checkpoint entities");
                     output.writeInt(value.counts().size());
                     for (var entry : value.counts().entrySet()) {
                         output.writeUTF(entry.getKey());

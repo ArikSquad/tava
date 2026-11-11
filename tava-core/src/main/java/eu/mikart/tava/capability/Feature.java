@@ -37,5 +37,11 @@ public enum Feature {
     /** Reads multiple records in one operation. */
     BULK_READ,
     /** Writes multiple records in one operation. */
-    BULK_WRITE
+    BULK_WRITE,
+    /**
+     * Batch inserts either store every record or leave no changes on failure.
+     *
+     * @since 1.3.0
+     */
+    ATOMIC_BULK_WRITE
 }

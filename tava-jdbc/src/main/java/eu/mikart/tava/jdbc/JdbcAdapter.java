@@ -10,6 +10,7 @@ import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
+import eu.mikart.tava.query.QueryDiagnostics;
 import eu.mikart.tava.query.Sort;
 import eu.mikart.tava.schema.EntityDefinition;
 import eu.mikart.tava.schema.FieldDefinition;
@@ -27,6 +28,7 @@ import eu.mikart.tava.spi.EntityStore;
 import eu.mikart.tava.spi.KeysetCursor;
 import eu.mikart.tava.spi.KeysetPagination;
 import eu.mikart.tava.spi.NativeAccess;
+import eu.mikart.tava.spi.OperationContext;
 import eu.mikart.tava.spi.SchemaManager;
 import eu.mikart.tava.spi.TransactionManager;
 import java.sql.Connection;
@@ -42,6 +44,7 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -112,7 +115,8 @@ public final class JdbcAdapter implements Adapter {
             final @NotNull Connections connections,
             final @NotNull Runnable closeAction) {
         this.profile = Objects.requireNonNull(profile);
-        this.connections = Objects.requireNonNull(connections);
+        Objects.requireNonNull(connections);
+        this.connections = () -> JdbcOperations.guard(connections.open());
         this.closeAction = Objects.requireNonNull(closeAction);
     }
 
@@ -249,18 +253,34 @@ public final class JdbcAdapter implements Adapter {
                             throw new SQLException("Transaction connection must disable auto-commit for batch inserts");
                         savepoint = connection.setSavepoint();
                     }
+                    List<EntityRecord> stored = new ArrayList<>();
+                    List<String> columns = columns(connection, entity);
                     int start = 0;
                     while (start < records.size()) {
-                        List<String> fields =
-                                List.copyOf(records.get(start).values().keySet());
+                        EntityRecord record = records.get(start);
+                        if (!record.values().keySet().containsAll(columns)) {
+                            stored.add(insertStored(connection, entity, record));
+                            start++;
+                            continue;
+                        }
+                        List<String> fields = records.get(start).values().keySet().stream()
+                                .sorted()
+                                .toList();
                         String sql = insertSql(entity, fields);
                         try (PreparedStatement statement = connection.prepareStatement(sql)) {
                             int end = start;
                             while (end < records.size()
-                                    && fields.equals(List.copyOf(
-                                            records.get(end).values().keySet()))) {
-                                bind(statement, records.get(end).values().values());
+                                    && end - start < OperationContext.options().jdbcBatchSize()
+                                    && fields.equals(records.get(end).values().keySet().stream()
+                                            .sorted()
+                                            .toList())) {
+                                bind(
+                                        statement,
+                                        fields.stream()
+                                                .map(records.get(end)::get)
+                                                .toList());
                                 statement.addBatch();
+                                stored.add(records.get(end));
                                 end++;
                             }
                             for (int result : statement.executeBatch()) {
@@ -270,7 +290,7 @@ public final class JdbcAdapter implements Adapter {
                         }
                     }
                     if (owned) connection.commit();
-                    return List.copyOf(records);
+                    return List.copyOf(stored);
                 } catch (SQLException | RuntimeException failure) {
                     if (owned)
                         try {
@@ -305,15 +325,10 @@ public final class JdbcAdapter implements Adapter {
         @Override
         public @NotNull EntityRecord insert(@NotNull String entity, @NotNull EntityRecord record) {
             if (record.values().isEmpty()) throw new IllegalArgumentException("record has no values");
-            List<String> fields = new ArrayList<>(record.values().keySet());
-            String sql = insertSql(entity, fields);
-            try (Lease lease = lease();
-                    PreparedStatement ps = lease.connection.prepareStatement(sql)) {
-                bind(ps, record.values().values());
-                ps.executeUpdate();
-                return record;
-            } catch (SQLException e) {
-                throw data("Insert into " + entity, e);
+            try (Lease lease = lease()) {
+                return insertStored(lease.connection, entity, record);
+            } catch (SQLException failure) {
+                throw data("Insert into " + entity, failure);
             }
         }
 
@@ -367,6 +382,52 @@ public final class JdbcAdapter implements Adapter {
         }
 
         @Override
+        public boolean exists(String entity, Predicate predicate) {
+            List<Object> parameters = new ArrayList<>();
+            String sql = "SELECT 1 FROM " + profile.quote(entity) + " WHERE " + predicateSql(predicate, parameters)
+                    + " ORDER BY 1" + profile.pagination(1, 0);
+            try (Lease lease = lease();
+                    PreparedStatement statement = lease.connection.prepareStatement(sql)) {
+                bind(statement, parameters);
+                try (ResultSet result = statement.executeQuery()) {
+                    return result.next();
+                }
+            } catch (SQLException failure) {
+                throw data("Exists " + entity, failure);
+            }
+        }
+
+        @Override
+        public long count(String entity, Predicate predicate) {
+            List<Object> parameters = new ArrayList<>();
+            String sql =
+                    "SELECT COUNT(*) FROM " + profile.quote(entity) + " WHERE " + predicateSql(predicate, parameters);
+            try (Lease lease = lease();
+                    PreparedStatement statement = lease.connection.prepareStatement(sql)) {
+                bind(statement, parameters);
+                try (ResultSet result = statement.executeQuery()) {
+                    result.next();
+                    return result.getLong(1);
+                }
+            } catch (SQLException failure) {
+                throw data("Count " + entity, failure);
+            }
+        }
+
+        @Override
+        public QueryDiagnostics explain(String entity, Query query) {
+            try (Lease lease = lease()) {
+                return new QueryDiagnostics(
+                        "jdbc-keyset",
+                        KeysetPagination.ordering(query.sorting(), primaryKeys(lease.connection, entity)),
+                        false,
+                        "Parameterized SELECT; index selection and table scans are determined by the database optimizer");
+            } catch (SQLException failure) {
+                throw data("Explain " + entity, failure);
+            }
+        }
+
+        @Override
         public @NotNull Page<EntityRecord> find(@NotNull String entity, @NotNull Query query) {
             try (Lease lease = lease()) {
                 Connection connection = lease.connection;
@@ -416,7 +477,7 @@ public final class JdbcAdapter implements Adapter {
                                     + field + " " + sort.direction();
                         })
                         .collect(Collectors.joining(", ")));
-                int requested = query.limit() == 0 ? 500 : query.limit();
+                int requested = query.limit() == 0 ? OperationContext.options().defaultPageSize() : query.limit();
                 sql.append(profile.pagination(requested + 1, 0));
                 try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
                     bind(statement, parameters);
@@ -427,10 +488,11 @@ public final class JdbcAdapter implements Adapter {
                         List<List<Object>> positions = new ArrayList<>(Math.min(requested, 1023) + 1);
                         while (rs.next()) {
                             Map<String, Object> values = new LinkedHashMap<>(visible);
-                            for (int i = 1; i <= visible; i++) values.put(metadata.getColumnLabel(i), rs.getObject(i));
+                            for (int i = 1; i <= visible; i++)
+                                values.put(metadata.getColumnLabel(i), readValue(rs, metadata, i));
                             records.add(EntityRecord.of(values));
                             List<Object> position = new ArrayList<>(order.size());
-                            for (int i = 1; i <= order.size(); i++) position.add(rs.getObject(visible + i));
+                            for (int i = 1; i <= order.size(); i++) position.add(readValue(rs, metadata, visible + i));
                             positions.add(position);
                         }
                         boolean more = records.size() > requested;
@@ -558,6 +620,88 @@ public final class JdbcAdapter implements Adapter {
                 }
             }
         }
+    }
+
+    private Object readValue(ResultSet result, ResultSetMetaData metadata, int index) throws SQLException {
+        int type = metadata.getColumnType(index);
+        String nativeType = metadata.getColumnTypeName(index).toUpperCase(Locale.ROOT);
+        if (type == Types.TIMESTAMP_WITH_TIMEZONE
+                || nativeType.contains("WITH TIME ZONE")
+                || nativeType.equals("DATETIMEOFFSET")) return result.getObject(index, OffsetDateTime.class);
+        if (type == Types.CLOB || type == Types.NCLOB || nativeType.equals("JSON") || nativeType.equals("JSONB"))
+            return result.getString(index);
+        if (type == Types.BLOB) return result.getBytes(index);
+        Object value = result.getObject(index);
+        if (profile.name().equals("oracle") && type == Types.TIMESTAMP && value != null)
+            return result.getTimestamp(index);
+        return value;
+    }
+
+    private List<String> primaryKeys(Connection connection, String entity) throws SQLException {
+        String namespace;
+        try {
+            namespace = connection.getSchema();
+        } catch (SQLFeatureNotSupportedException unsupported) {
+            namespace = null;
+        }
+        SortedMap<Integer, String> keys = new TreeMap<>();
+        try (ResultSet result = connection.getMetaData().getPrimaryKeys(connection.getCatalog(), namespace, entity)) {
+            while (result.next()) keys.put(result.getInt("KEY_SEQ"), result.getString("COLUMN_NAME"));
+        }
+        return List.copyOf(keys.values());
+    }
+
+    private List<String> columns(Connection connection, String entity) throws SQLException {
+        String namespace;
+        try {
+            namespace = connection.getSchema();
+        } catch (SQLFeatureNotSupportedException unsupported) {
+            namespace = null;
+        }
+        List<String> names = new ArrayList<>();
+        try (ResultSet result = connection.getMetaData().getColumns(connection.getCatalog(), namespace, entity, "%")) {
+            while (result.next()) names.add(result.getString("COLUMN_NAME"));
+        }
+        return names;
+    }
+
+    private EntityRecord insertStored(Connection connection, String entity, EntityRecord record) throws SQLException {
+        List<String> fields = new ArrayList<>(record.values().keySet());
+        List<String> keys = primaryKeys(connection, entity);
+        List<String> missingKeys =
+                keys.stream().filter(key -> !record.values().containsKey(key)).toList();
+        Map<String, Object> values = new LinkedHashMap<>(record.values());
+        try (PreparedStatement statement = missingKeys.isEmpty()
+                ? connection.prepareStatement(insertSql(entity, fields))
+                : connection.prepareStatement(insertSql(entity, fields), missingKeys.toArray(String[]::new))) {
+            bind(statement, record.values().values());
+            statement.executeUpdate();
+            if (!missingKeys.isEmpty()) {
+                try (ResultSet generated = statement.getGeneratedKeys()) {
+                    if (generated.next()) {
+                        for (int i = 0; i < missingKeys.size(); i++)
+                            values.put(missingKeys.get(i), generated.getObject(i + 1));
+                    }
+                }
+            }
+        }
+        if (!keys.isEmpty() && keys.stream().allMatch(key -> values.get(key) != null)) {
+            String where = keys.stream().map(key -> profile.quote(key) + " = ?").collect(Collectors.joining(" AND "));
+            try (PreparedStatement statement =
+                    connection.prepareStatement("SELECT * FROM " + profile.quote(entity) + " WHERE " + where)) {
+                bind(statement, keys.stream().map(values::get).toList());
+                try (ResultSet result = statement.executeQuery()) {
+                    if (result.next()) {
+                        ResultSetMetaData metadata = result.getMetaData();
+                        for (int i = 1; i <= metadata.getColumnCount(); i++) {
+                            String field = metadata.getColumnLabel(i);
+                            if (!record.values().containsKey(field)) values.put(field, readValue(result, metadata, i));
+                        }
+                    }
+                }
+            }
+        }
+        return EntityRecord.of(values);
     }
 
     private String insertSql(String entity, List<String> fields) {

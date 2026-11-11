@@ -6,6 +6,7 @@ import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
+import eu.mikart.tava.query.QueryDiagnostics;
 import java.util.List;
 
 /**
@@ -28,6 +29,34 @@ public abstract class ForwardingEntityStore implements EntityStore {
      * @since 1.3.0
      */
     protected abstract EntityStore delegate();
+
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.3.0
+     */
+    @Override
+    public long count(String entity, Predicate predicate) {
+        return delegate().count(entity, predicate);
+    }
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.3.0
+     */
+    @Override
+    public boolean exists(String entity, Predicate predicate) {
+        return delegate().exists(entity, predicate);
+    }
+    /**
+     * {@inheritDoc}
+     *
+     * @since 1.3.0
+     */
+    @Override
+    public QueryDiagnostics explain(String entity, Query query) {
+        return delegate().explain(entity, query);
+    }
 
     /**
      * {@inheritDoc}
