@@ -33,6 +33,15 @@ class ValueCodecsTest {
     };
 
     @Test
+    void rejectsAmbiguousOrExcessivelyNestedJson() {
+        assertThrows(TavaException.Mapping.class, () -> ValueCodecs.fromJson("{\"x\":null,\"x\":1}"));
+        assertThrows(TavaException.Mapping.class, () -> ValueCodecs.fromJson("[\u000b1]"));
+        assertThrows(TavaException.Mapping.class, () -> ValueCodecs.fromJson("\u0661"));
+        assertThrows(TavaException.Mapping.class, () -> ValueCodecs.fromJson("[".repeat(129) + "0" + "]".repeat(129)));
+        assertNotNull(ValueCodecs.fromJson("[".repeat(127) + "0" + "]".repeat(127)));
+    }
+
+    @Test
     void composesEnumAndCollectionCodecsAcrossJsonStorage() {
         ValueCodec<Set<State>> codec = ValueCodecs.set(ValueCodecs.enumName(State.class));
         Object encoded = codec.encode(Set.of(State.NEW, State.ACTIVE));

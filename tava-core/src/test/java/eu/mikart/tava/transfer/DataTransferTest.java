@@ -12,6 +12,7 @@ import eu.mikart.tava.capability.Feature;
 import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
+import eu.mikart.tava.h2.H2;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
@@ -24,16 +25,175 @@ import eu.mikart.tava.spi.Adapter;
 import eu.mikart.tava.spi.EntityStore;
 import eu.mikart.tava.spi.NativeAccess;
 import eu.mikart.tava.spi.SchemaManager;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.UnaryOperator;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class DataTransferTest {
+    @Test
+    void readsLegacyVersionOneCheckpoints(@TempDir Path directory) throws Exception {
+        var store = new FileTransferCheckpointStore(directory);
+        var checkpoint = new TransferCheckpoint(
+                "legacy", "source", "target", "digest", 10, 0, null, Map.of("things", 2L), false);
+        try (var lease = store.acquire("legacy")) {
+            lease.save(checkpoint);
+        }
+        Path file;
+        try (var files = Files.list(directory)) {
+            file = files.filter(path -> path.toString().endsWith(".checkpoint"))
+                    .findFirst()
+                    .orElseThrow();
+        }
+        byte[] bytes = Files.readAllBytes(file);
+        ByteBuffer.wrap(bytes).putInt(1);
+        Files.write(file, Arrays.copyOf(bytes, bytes.length - Integer.BYTES));
+        try (var lease = store.acquire("legacy")) {
+            assertEquals(checkpoint, lease.load().orElseThrow());
+        }
+    }
+
+    @Test
+    void cancellationAndDeadlineStopBeforeReading() {
+        AtomicInteger reads = new AtomicInteger();
+        StubStore sourceStore = new StubStore() {
+            @Override
+            public Page<EntityRecord> find(String entity, Query query) {
+                reads.incrementAndGet();
+                return new Page<>(List.of(), null);
+            }
+        };
+        Schema schema = Schema.builder().entity("things", e -> e.integer("id")).build();
+        try (Tava source = Tava.open(adapter(sourceStore));
+                Tava target = Tava.open(adapter(new StubStore()))) {
+            for (TransferControl control : List.of(
+                    new TransferControl(Duration.ZERO, () -> true, 4, 4),
+                    new TransferControl(Duration.ofNanos(1), () -> false, 4, 4))) {
+                TransferReport report = DataTransfer.copy(
+                        source, target, schema, new TransferOptions(10, false, false, null, null), control);
+                assertFalse(report.complete());
+                assertEquals(
+                        TransferIssue.Severity.ERROR, report.issues().getLast().severity());
+            }
+            assertEquals(0, reads.get());
+        }
+    }
+
+    @Test
+    void boundsCursorMemoryAndRetainsTerminalError() {
+        AtomicInteger pages = new AtomicInteger();
+        StubStore sourceStore = new StubStore() {
+            @Override
+            public Page<EntityRecord> find(String entity, Query query) {
+                int page = pages.incrementAndGet();
+                return new Page<>(List.of(EntityRecord.of(Map.of("id", page))), "page-" + page);
+            }
+        };
+        Schema schema = Schema.builder().entity("things", e -> e.integer("id")).build();
+        try (Tava source = Tava.open(adapter(sourceStore));
+                Tava target = Tava.open(adapter(new StubStore()))) {
+            TransferReport report = DataTransfer.copy(
+                    source,
+                    target,
+                    schema,
+                    new TransferOptions(1, false, false, null, null),
+                    new TransferControl(Duration.ZERO, () -> false, 2, 1));
+            assertFalse(report.complete());
+            assertEquals(1L, report.transferred().get("things"));
+            assertTrue(report.issues().getLast().detail().contains("tracking limit"));
+        }
+    }
+
+    @Test
+    void rollsBackFailedBulkWritesBeforeIndividualRetryWithoutRepeatingTransforms() {
+        Schema schema = Schema.builder()
+                .entity("things", e -> e.integer("id").identity())
+                .build();
+        AtomicInteger transforms = new AtomicInteger();
+        try (Tava source = Tava.open(H2.memory("transfer_source_" + UUID.randomUUID()));
+                Tava target = Tava.open(H2.memory("transfer_target_" + UUID.randomUUID()))) {
+            source.plan(schema).apply();
+            target.plan(schema).apply();
+            source.records("things")
+                    .insert(List.of(EntityRecord.of(Map.of("id", 1)), EntityRecord.of(Map.of("id", 2))));
+            target.records("things").insert(EntityRecord.of(Map.of("id", 2)));
+            TransferReport report = DataTransfer.copy(
+                    source,
+                    target,
+                    schema,
+                    new TransferOptions(
+                            10,
+                            false,
+                            false,
+                            record -> {
+                                transforms.incrementAndGet();
+                                return record;
+                            },
+                            null));
+            assertFalse(report.complete());
+            assertEquals(1L, report.transferred().get("things"));
+            assertEquals(2, target.records("things").find(Query.all()).items().size());
+            assertEquals(2, transforms.get());
+        }
+    }
+
+    @Test
+    void persistsDeduplicatedWarningsInFileCheckpoints(@TempDir Path directory) {
+        Schema sourceSchema = Schema.builder()
+                .entity("things", e -> {
+                    e.integer("id").identity();
+                    e.string("omitted");
+                })
+                .build();
+        Schema targetSchema = Schema.builder()
+                .entity("things", e -> e.integer("id").identity())
+                .build();
+        var checkpoints = new FileTransferCheckpointStore(directory);
+        try (Tava source = Tava.open(H2.memory("warning_source_" + UUID.randomUUID()));
+                Tava target = Tava.open(H2.memory("warning_target_" + UUID.randomUUID()))) {
+            source.plan(sourceSchema).apply();
+            source.records("things")
+                    .insert(List.of(
+                            EntityRecord.of(Map.of("id", 1, "omitted", "a")),
+                            EntityRecord.of(Map.of("id", 2, "omitted", "b"))));
+            TransferOptions options = new TransferOptions(1, true, true, null, null);
+            TransferReport report =
+                    ResumableTransfer.copy(source, target, targetSchema, options, "warnings", checkpoints);
+            assertTrue(report.complete());
+            assertEquals(1, report.issues().size());
+            TransferReport resumed =
+                    ResumableTransfer.copy(source, target, targetSchema, options, "warnings", checkpoints);
+            assertEquals(report, resumed);
+        }
+    }
+
+    @Test
+    void boundsAndDeduplicatesDiagnosticsWithoutDroppingFailure() {
+        List<TransferIssue> issues = new TransferIssues(3);
+        var first = new TransferIssue("things", "one", TransferIssue.Severity.LOSSY, "omitted");
+        issues.add(first);
+        issues.add(first);
+        issues.add(new TransferIssue("things", "two", TransferIssue.Severity.LOSSY, "omitted"));
+        issues.add(new TransferIssue("things", "three", TransferIssue.Severity.LOSSY, "omitted"));
+        assertEquals(3, issues.size());
+        assertEquals(TransferIssue.Severity.WARNING, issues.getLast().severity());
+        issues.add(new TransferIssue("things", null, TransferIssue.Severity.ERROR, "failed"));
+        assertEquals(3, issues.size());
+        assertEquals("failed", issues.getLast().detail());
+    }
+
     @Test
     void reconcilesShortBulkWriteBeforeSavingCheckpoint() {
         EntityRecord first =
@@ -485,7 +645,7 @@ class DataTransferTest {
             }
 
             public Capabilities capabilities() {
-                throw new UnsupportedOperationException();
+                return Capabilities.builder(name()).build();
             }
 
             public SchemaManager schemas() {

@@ -16,10 +16,12 @@ import eu.mikart.tava.spi.EntityStore;
 import eu.mikart.tava.spi.ForwardingEntityStore;
 import eu.mikart.tava.spi.NativeAccess;
 import eu.mikart.tava.spi.SchemaManager;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executor;
-import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
@@ -34,6 +36,7 @@ import org.jetbrains.annotations.Nullable;
  * Create separate instances when you need independent adapter lifecycles.
  */
 public final class Tava implements AutoCloseable {
+    private static final Executor BLOCKING_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
     private final Adapter adapter;
     private final Executor executor;
     private final ReentrantReadWriteLock lifecycle = new ReentrantReadWriteLock(true);
@@ -123,13 +126,13 @@ public final class Tava implements AutoCloseable {
     }
 
     /**
-     * Opens a Tava facade over the given adapter.
+     * Opens a Tava facade over the given adapter, using virtual threads for asynchronous blocking I/O.
      *
      * @param adapter adapter implementation to use for schema, data, and native access
      * @return a facade that delegates all operations to {@code adapter}
      */
     public static @NotNull Tava open(final @NotNull Adapter adapter) {
-        return new Tava(adapter, ForkJoinPool.commonPool());
+        return new Tava(adapter, BLOCKING_EXECUTOR);
     }
 
     /**
@@ -396,18 +399,50 @@ public final class Tava implements AutoCloseable {
         return adapter;
     }
 
+    /** Waits for active operations and closes the adapter. This method has no deadline. */
     @Override
     public void close() {
-        if (transactionStore.get() != null || lifecycle.getReadHoldCount() > 0)
-            throw new TavaException.Capability("Cannot close Tava inside an active operation");
+        checkClose();
         Lock close = lifecycle.writeLock();
         close.lock();
         try {
-            if (closed) return;
-            closed = true;
-            adapter.close();
+            closeAdapter();
         } finally {
             close.unlock();
         }
+    }
+
+    /**
+     * Waits up to the timeout for active operations before closing the adapter. A timeout leaves the instance open. The
+     * timeout bounds waiting for operations; configure driver timeouts separately for adapter cleanup itself.
+     *
+     * @param timeout non-negative maximum wait for active operations
+     * @return true if closed, false if active operations did not finish before the timeout
+     * @throws InterruptedException if interrupted while waiting
+     * @since 1.3.0
+     */
+    public boolean close(Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout, "timeout");
+        if (timeout.isNegative()) throw new IllegalArgumentException("timeout must not be negative");
+        checkClose();
+        Lock close = lifecycle.writeLock();
+        if (!close.tryLock(timeout.toNanos(), TimeUnit.NANOSECONDS)) return false;
+        try {
+            closeAdapter();
+            return true;
+        } finally {
+            close.unlock();
+        }
+    }
+
+    private void checkClose() {
+        if (transactionStore.get() != null || lifecycle.getReadHoldCount() > 0)
+            throw new TavaException.Capability("Cannot close Tava inside an active operation");
+    }
+
+    private void closeAdapter() {
+        if (closed) return;
+        closed = true;
+        adapter.close();
     }
 }

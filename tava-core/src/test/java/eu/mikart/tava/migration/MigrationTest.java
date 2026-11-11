@@ -9,6 +9,8 @@ import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.Schema;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -23,6 +25,22 @@ class MigrationTest {
 
     private String uniqueEntity(String prefix) {
         return (prefix + UUID.randomUUID().toString().replace("-", "").substring(0, 12)).toLowerCase(Locale.ROOT);
+    }
+
+    @Test
+    void computesAndLoadsStableMigrationContentChecksums() throws Exception {
+        String expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assertEquals(
+                expected, MigrationChecksums.sha256(new ByteArrayInputStream("abc".getBytes(StandardCharsets.UTF_8))));
+        String manifest = "001-create.java=" + expected + "\n";
+        assertEquals(
+                expected,
+                MigrationChecksums.fromManifest(
+                        new ByteArrayInputStream(manifest.getBytes(StandardCharsets.ISO_8859_1)), "001-create.java"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> MigrationChecksums.fromManifest(
+                        new ByteArrayInputStream(manifest.getBytes(StandardCharsets.ISO_8859_1)), "missing"));
     }
 
     @Test

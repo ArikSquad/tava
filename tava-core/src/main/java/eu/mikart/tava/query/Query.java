@@ -8,7 +8,8 @@ import org.jetbrains.annotations.Range;
 
 /**
  * A page request. Cursors continue an ordering; they do not preserve a database snapshot. Concurrent changes to records
- * or their sort values may affect later pages.
+ * or their sort values may affect later pages. Reuse a cursor only with the same adapter, entity, predicate,
+ * projection, sorting, and page size.
  *
  * @param predicate filter applied to each page
  * @param projection fields returned for each record, or empty for all fields

@@ -96,6 +96,8 @@ public final class ValueCodecs {
     /**
      * Parses JSON text into Java values.
      *
+     * <p>Nesting is limited to 128 values. Duplicate object keys are rejected.
+     *
      * @param json JSON text to parse
      * @return parsed value, represented by maps, lists, strings, booleans, numbers, or {@code null}
      * @throws TavaException.Mapping if {@code json} is not valid JSON
@@ -186,6 +188,7 @@ public final class ValueCodecs {
     private static final class JsonParser {
         private final String text;
         private int offset;
+        private int depth;
 
         private JsonParser(String text) {
             this.text = Objects.requireNonNull(text, "json");
@@ -201,15 +204,20 @@ public final class ValueCodecs {
         private Object value() {
             whitespace();
             if (offset >= text.length()) return fail();
-            return switch (text.charAt(offset)) {
-                case '"' -> string();
-                case '[' -> array();
-                case '{' -> object();
-                case 't' -> literal("true", true);
-                case 'f' -> literal("false", false);
-                case 'n' -> literal("null", null);
-                default -> number();
-            };
+            if (++depth > 128) return fail();
+            try {
+                return switch (text.charAt(offset)) {
+                    case '"' -> string();
+                    case '[' -> array();
+                    case '{' -> object();
+                    case 't' -> literal("true", true);
+                    case 'f' -> literal("false", false);
+                    case 'n' -> literal("null", null);
+                    default -> number();
+                };
+            } finally {
+                depth--;
+            }
         }
 
         private List<Object> array() {
@@ -236,6 +244,7 @@ public final class ValueCodecs {
                 String key = string();
                 whitespace();
                 if (!take(':')) fail();
+                if (result.containsKey(key)) fail();
                 result.put(key, value());
                 whitespace();
             } while (take(','));
@@ -284,22 +293,22 @@ public final class ValueCodecs {
             int start = offset;
             if (take('-')) {}
             if (take('0')) {
-                if (offset < text.length() && Character.isDigit(text.charAt(offset))) return fail();
+                if (offset < text.length() && text.charAt(offset) >= '0' && text.charAt(offset) <= '9') return fail();
             } else {
                 int integerStart = offset;
-                while (offset < text.length() && Character.isDigit(text.charAt(offset))) offset++;
+                while (offset < text.length() && text.charAt(offset) >= '0' && text.charAt(offset) <= '9') offset++;
                 if (integerStart == offset) return fail();
             }
             if (take('.')) {
                 int fractionStart = offset;
-                while (offset < text.length() && Character.isDigit(text.charAt(offset))) offset++;
+                while (offset < text.length() && text.charAt(offset) >= '0' && text.charAt(offset) <= '9') offset++;
                 if (fractionStart == offset) return fail();
             }
             if (offset < text.length() && (text.charAt(offset) == 'e' || text.charAt(offset) == 'E')) {
                 offset++;
                 if (offset < text.length() && (text.charAt(offset) == '+' || text.charAt(offset) == '-')) offset++;
                 int exponentStart = offset;
-                while (offset < text.length() && Character.isDigit(text.charAt(offset))) offset++;
+                while (offset < text.length() && text.charAt(offset) >= '0' && text.charAt(offset) <= '9') offset++;
                 if (exponentStart == offset) return fail();
             }
             if (start == offset) return fail();
@@ -326,7 +335,11 @@ public final class ValueCodecs {
         }
 
         private void whitespace() {
-            while (offset < text.length() && Character.isWhitespace(text.charAt(offset))) offset++;
+            while (offset < text.length()) {
+                char next = text.charAt(offset);
+                if (next != ' ' && next != '\t' && next != '\r' && next != '\n') break;
+                offset++;
+            }
         }
 
         private <T> T fail() {

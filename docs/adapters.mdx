@@ -204,3 +204,12 @@ record AuditEvent(
 Managed databases that expose the same protocol use the same adapter. For example,
 a managed PostgreSQL endpoint still uses `tava-postgres`.
 </Callout>
+
+## DynamoDB Read Policy
+
+`DynamoDb.use(client, false)` and `DynamoDb.createDefault(false)` opt into eventually
+consistent reads. Existing factory methods continue to request strong consistency.
+Migration journals, locks, and resumable reconciliation should use strong consistency.
+Partition-key equality combined with one sort-key equality, range comparison, or prefix
+condition uses DynamoDB Query. Additional predicates on non-key fields become query
+filters. Predicates that cannot be represented safely retain the Scan path.

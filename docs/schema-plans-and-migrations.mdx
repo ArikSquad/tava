@@ -163,6 +163,15 @@ Migration migration = Migration.builder("2026-03-04-add-account-status")
 ```
 
 Only set a checksum that stays identical for the same migration content.
+`MigrationChecksums.sha256(path)` computes a digest from an immutable source file;
+the stream overload also works with bundled resources. Hash the actual migration content,
+including dependencies that affect its behavior, rather than a migration ID or label.
+
+The repository's `generateMigrationChecksums` Gradle task produces a deterministic
+`build/generated/migration-checksums.properties` manifest from `src/main/migrations`.
+Use `-PmigrationSources=directory` to choose another source directory. Package the manifest
+with the application and read entries with `MigrationChecksums.fromManifest(stream, path)`.
+Paths in the manifest are relative to the source directory and use forward slashes.
 
 Migrations are protected by a durable lock. If a process dies and leaves a lock behind,
 `migrations.lock()` shows its owner token. Verify that the original migration process

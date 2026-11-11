@@ -23,13 +23,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
-import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 
@@ -65,6 +63,32 @@ public final class ResumableTransfer {
             TransferOptions options,
             String transferId,
             TransferCheckpointStore checkpoints) {
+        return copy(source, target, schema, options, transferId, checkpoints, TransferControl.defaults());
+    }
+
+    /**
+     * Copies records with cooperative cancellation, a deadline, and bounded diagnostics and cursor tracking.
+     *
+     * @param source source adapter
+     * @param target target adapter
+     * @param schema schema to copy
+     * @param options transfer options
+     * @param transferId stable transfer identifier
+     * @param checkpoints checkpoint store
+     * @param control cancellation, timeout, and memory limits
+     * @return transfer progress and retained diagnostics
+     * @since 1.3.0
+     */
+    public static TransferReport copy(
+            Tava source,
+            Tava target,
+            Schema schema,
+            TransferOptions options,
+            String transferId,
+            TransferCheckpointStore checkpoints,
+            TransferControl control) {
+        Objects.requireNonNull(control, "control");
+        long started = System.nanoTime();
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(schema, "schema");
@@ -100,35 +124,40 @@ public final class ResumableTransfer {
             if (invalidCompletePosition || invalidIncompletePosition) {
                 throw new IllegalArgumentException("Checkpoint has an invalid completed position");
             }
-            if (state.complete()) return new TransferReport(state.counts(), List.of(), true);
-            if (options.applySchema()) target.plan(schema).apply(new ApplyOptions(options.allowLossy(), false));
             Map<String, Long> counts = new LinkedHashMap<>(state.counts());
-            List<TransferIssue> issues = new ArrayList<>();
+            List<TransferIssue> issues = new TransferIssues(control.maxIssues());
+            issues.addAll(state.issues());
+            if (state.complete()) return new TransferReport(counts, issues, true);
+            try {
+                control.check(started);
+            } catch (RuntimeException failure) {
+                issues.add(new TransferIssue("*", null, TransferIssue.Severity.ERROR, failure.getMessage()));
+                return new TransferReport(counts, issues, false);
+            }
+            if (options.applySchema()) target.plan(schema).apply(new ApplyOptions(options.allowLossy(), false));
             for (int index = state.entityIndex(); index < schema.entities().size(); index++) {
                 EntityDefinition entity = schema.entities().get(index);
                 String cursor = index == state.entityIndex() ? state.cursor() : null;
-                Set<String> seen = new HashSet<>();
-                if (cursor != null) seen.add(cursor);
+                TransferCursors seen = new TransferCursors(control.maxTrackedCursors(), cursor);
                 do {
                     try {
+                        control.check(started);
                         Page<EntityRecord> page = source.records(entity.name())
                                 .find(Query.builder()
                                         .limit(options.batchSize())
                                         .cursor(cursor)
                                         .build());
                         String next = page.nextCursor();
-                        if (next != null && !seen.add(next))
-                            throw new IllegalStateException("Source adapter repeated a cursor");
+                        seen.add(next);
+                        control.check(started);
                         List<EntityRecord> records = page.items().stream()
                                 .map(options.transform())
                                 .map(record -> TransferRecords.conform(
                                         source.adapterName(), entity, record, options.allowLossy(), issues))
                                 .toList();
-                        write(target, entity, records);
+                        write(target, entity, records, control, started);
                         long count = counts.getOrDefault(entity.name(), 0L);
-                        for (int i = 0; i < records.size(); i++)
-                            options.progress().transferred(entity.name(), ++count);
-                        counts.put(entity.name(), count);
+                        counts.put(entity.name(), count + records.size());
                         int nextEntity = next == null ? index + 1 : index;
                         boolean complete = nextEntity == schema.entities().size();
                         state = new TransferCheckpoint(
@@ -140,8 +169,11 @@ public final class ResumableTransfer {
                                 nextEntity,
                                 next,
                                 counts,
-                                complete);
+                                complete,
+                                issues);
                         lease.save(state);
+                        for (int i = 0; i < records.size(); i++)
+                            options.progress().transferred(entity.name(), ++count);
                         cursor = next;
                     } catch (RuntimeException failure) {
                         issues.add(new TransferIssue(
@@ -164,14 +196,16 @@ public final class ResumableTransfer {
                         schema.entities().size(),
                         null,
                         counts,
-                        true);
+                        true,
+                        issues);
                 lease.save(state);
             }
             return new TransferReport(counts, issues, true);
         }
     }
 
-    private static void write(Tava target, EntityDefinition entity, List<EntityRecord> values) {
+    private static void write(
+            Tava target, EntityDefinition entity, List<EntityRecord> values, TransferControl control, long started) {
         if (values.isEmpty()) return;
         values.forEach(value -> identity(entity, value));
         Records records = target.records(entity.name());
@@ -181,6 +215,7 @@ public final class ResumableTransfer {
         int max = (int) Math.min(Integer.MAX_VALUE, limit);
         if (!target.capabilities().supports(Feature.BULK_WRITE)) max = 1;
         for (int start = 0; start < values.size(); ) {
+            control.check(started);
             int end = start + Math.min(max, values.size() - start);
             List<EntityRecord> batch = values.subList(start, end);
             if (batch.size() > 1) {
@@ -196,6 +231,7 @@ public final class ResumableTransfer {
                 }
             }
             for (EntityRecord value : batch) {
+                control.check(started);
                 Identity identity = identity(entity, value);
                 var result = records.insertResult(value);
                 if (!result.inserted() && !result.conflicted())

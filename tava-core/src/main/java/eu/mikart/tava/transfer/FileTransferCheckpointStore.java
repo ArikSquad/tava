@@ -17,8 +17,10 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -29,7 +31,7 @@ import java.util.Optional;
  * @since 1.3.0
  */
 public final class FileTransferCheckpointStore implements TransferCheckpointStore {
-    private static final int VERSION = 1;
+    private static final int VERSION = 2;
     private final Path directory;
 
     /**
@@ -108,7 +110,8 @@ public final class FileTransferCheckpointStore implements TransferCheckpointStor
             if (!Files.exists(checkpoint)) return Optional.empty();
             try (DataInputStream input =
                     new DataInputStream(new BufferedInputStream(Files.newInputStream(checkpoint)))) {
-                if (input.readInt() != VERSION) throw new IOException("Unsupported checkpoint version");
+                int version = input.readInt();
+                if (version < 1 || version > VERSION) throw new IOException("Unsupported checkpoint version");
                 String id = input.readUTF();
                 if (!transferId.equals(id)) throw new IOException("Checkpoint transfer ID mismatch");
                 String source = input.readUTF();
@@ -131,9 +134,20 @@ public final class FileTransferCheckpointStore implements TransferCheckpointStor
                 for (int i = 0; i < size; i++)
                     if (counts.put(input.readUTF(), input.readLong()) != null)
                         throw new IOException("Duplicate checkpoint entity");
+                List<TransferIssue> issues = new ArrayList<>();
+                if (version >= 2) {
+                    int issueCount = input.readInt();
+                    if (issueCount < 0 || issueCount > 100000) throw new IOException("Invalid checkpoint issue count");
+                    for (int i = 0; i < issueCount; i++) {
+                        String entity = input.readUTF();
+                        String field = input.readBoolean() ? input.readUTF() : null;
+                        TransferIssue.Severity severity = TransferIssue.Severity.valueOf(input.readUTF());
+                        issues.add(new TransferIssue(entity, field, severity, input.readUTF()));
+                    }
+                }
                 if (input.read() != -1) throw new IOException("Trailing checkpoint data");
                 return Optional.of(new TransferCheckpoint(
-                        id, source, target, fingerprint, batchSize, index, cursor, counts, complete));
+                        id, source, target, fingerprint, batchSize, index, cursor, counts, complete, issues));
             } catch (IOException | IllegalArgumentException failure) {
                 throw new TavaException.Data("Read transfer checkpoint", failure);
             }
@@ -169,10 +183,25 @@ public final class FileTransferCheckpointStore implements TransferCheckpointStor
                         output.writeUTF(entry.getKey());
                         output.writeLong(entry.getValue());
                     }
+                    if (value.issues().size() > 100000) throw new IOException("Too many checkpoint issues");
+                    output.writeInt(value.issues().size());
+                    for (TransferIssue issue : value.issues()) {
+                        output.writeUTF(issue.entity());
+                        output.writeBoolean(issue.field() != null);
+                        if (issue.field() != null) output.writeUTF(issue.field());
+                        output.writeUTF(issue.severity().name());
+                        output.writeUTF(issue.detail());
+                    }
                     output.flush();
                     file.getFD().sync();
                 }
                 Files.move(temporary, checkpoint, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                // POSIX filesystems require syncing the directory to make the renamed entry durable after power loss.
+                if (directory.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+                    try (FileChannel parent = FileChannel.open(directory, StandardOpenOption.READ)) {
+                        parent.force(true);
+                    }
+                }
             } catch (IOException failure) {
                 throw new TavaException.Data("Save transfer checkpoint", failure);
             } finally {

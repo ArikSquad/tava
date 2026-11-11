@@ -10,7 +10,9 @@ import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.testkit.AdapterContractTest;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -18,8 +20,14 @@ import org.testcontainers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.SdkRequest;
+import software.amazon.awssdk.core.interceptor.Context;
+import software.amazon.awssdk.core.interceptor.ExecutionAttributes;
+import software.amazon.awssdk.core.interceptor.ExecutionInterceptor;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
+import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
 
 @Testcontainers(disabledWithoutDocker = true)
 class DynamoDbContainerTest extends AdapterContractTest {
@@ -44,6 +52,81 @@ class DynamoDbContainerTest extends AdapterContractTest {
     @Override
     protected boolean supportsInPredicate() {
         return false;
+    }
+
+    @Test
+    void queriesRangesAndResidualFiltersWithConfiguredConsistency() {
+        List<SdkRequest> reads = new ArrayList<>();
+        try (DynamoDbClient client = DynamoDbClient.builder()
+                .endpointOverride(LOCALSTACK.getEndpoint())
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
+                .region(Region.of(LOCALSTACK.getRegion()))
+                .overrideConfiguration(config -> config.addExecutionInterceptor(new ExecutionInterceptor() {
+                    @Override
+                    public void beforeExecution(Context.BeforeExecution context, ExecutionAttributes attributes) {
+                        if (context.request() instanceof QueryRequest || context.request() instanceof ScanRequest)
+                            reads.add(context.request());
+                    }
+                }))
+                .build()) {
+            for (boolean consistent : List.of(true, false)) {
+                String entity = "ranges_" + UUID.randomUUID().toString().replace("-", "");
+                try (Tava tava = Tava.open(DynamoDb.use(client, consistent))) {
+                    tava.plan(Schema.builder()
+                                    .entity(entity, e -> {
+                                        e.string("tenant").identity();
+                                        e.string("position").identity();
+                                        e.string("state");
+                                    })
+                                    .build())
+                            .apply();
+                    for (String position : List.of("a", "b", "c")) {
+                        tava.records(entity)
+                                .insert(EntityRecord.builder()
+                                        .set("tenant", "one")
+                                        .set("position", position)
+                                        .set("state", "active")
+                                        .build());
+                    }
+                    reads.clear();
+                    var range = tava.records(entity)
+                            .find(Query.builder()
+                                    .where(Predicate.and(
+                                            Predicate.eq("tenant", "one"),
+                                            Predicate.gte("position", "b"),
+                                            Predicate.eq("state", "active")))
+                                    .build());
+                    assertEquals(2, range.items().size());
+                    QueryRequest request = assertInstanceOf(QueryRequest.class, reads.getLast());
+                    assertEquals(consistent, request.consistentRead());
+                    assertTrue(request.keyConditionExpression().contains(">="));
+                    assertNotNull(request.filterExpression());
+                    assertFalse(reads.stream().anyMatch(ScanRequest.class::isInstance));
+
+                    assertEquals(
+                            1,
+                            tava.records(entity)
+                                    .find(Query.builder()
+                                            .where(Predicate.and(
+                                                    Predicate.eq("tenant", "one"),
+                                                    Predicate.startsWith("position", "b")))
+                                            .build())
+                                    .items()
+                                    .size());
+                    assertTrue(assertInstanceOf(QueryRequest.class, reads.getLast())
+                            .keyConditionExpression()
+                            .contains("begins_with"));
+
+                    tava.records(entity)
+                            .find(Query.builder()
+                                    .where(Predicate.or(Predicate.eq("tenant", "one"), Predicate.eq("position", "b")))
+                                    .build());
+                    assertEquals(
+                            consistent,
+                            assertInstanceOf(ScanRequest.class, reads.getLast()).consistentRead());
+                }
+            }
+        }
     }
 
     @Test

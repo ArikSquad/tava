@@ -99,9 +99,14 @@ report.issues().forEach(issue ->
 ```
 
 If an insert fails, copying stops and the report is returned with `complete() == false`.
-Counts include the records successfully inserted before the failure.
+Counts include the records successfully inserted before the failure. When the target
+supports portable transactions and bulk writes, ordinary copies use transactional batches;
+a failed batch is rolled back before retrying its already transformed records individually.
 The transfer also stops with an error issue if a source adapter repeats any cursor, which
 prevents a broken paging implementation from causing an infinite loop or duplicate copy.
+Diagnostics are deduplicated and capped at 1,000 entries, including a truncation notice.
+Cursor tracking stores fixed-size digests and stops safely after 100,000 cursors per entity.
+Raise this limit explicitly for larger copies or resume a checkpointed copy.
 
 Read `issues()` even when a transfer completes: it can include `LOSSY` issues when
 source fields were omitted from target records. These are reported only when
@@ -152,3 +157,20 @@ atomic checkpoint saves.
 Tava handles paging and target inserts, but it does not replace backup, restore, CDC,
 or online migration tooling. Use it when you want a schema-aware application-level copy.
 </Callout>
+
+## Cancellation, Deadlines, and Memory Limits
+
+Both copy APIs accept a final `TransferControl` argument:
+
+```java
+var control = new TransferControl(
+        Duration.ofMinutes(30), cancelled::get, 1_000, 100_000);
+TransferReport report = DataTransfer.copy(source, target, schema, options, control);
+```
+
+Cancellation, thread interruption, and elapsed deadlines are checked between driver calls.
+They return an incomplete report; they do not interrupt an in-flight database operation.
+Configure driver timeouts separately. Timeout duration starts anew for each copy invocation.
+Resumable copies retain diagnostics from completed pages in their checkpoints, including
+when a completed transfer is opened again. Version 1 checkpoints remain readable.
+File checkpoints sync their parent directory after replacement on POSIX filesystems.

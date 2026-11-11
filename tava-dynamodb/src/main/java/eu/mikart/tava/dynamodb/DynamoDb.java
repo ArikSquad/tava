@@ -20,7 +20,19 @@ public final class DynamoDb {
      * @return adapter backed by the supplied client
      */
     public static @NotNull Adapter use(final @NotNull DynamoDbClient client) {
-        return translate(new DynamoDbAdapter(client, false));
+        return use(client, true);
+    }
+
+    /**
+     * Wraps an application-managed client with a configurable read consistency policy.
+     *
+     * @param client client whose lifecycle remains owned by the application
+     * @param consistentRead true for strongly consistent reads, false for eventually consistent reads
+     * @return adapter backed by the supplied client
+     * @since 1.3.0
+     */
+    public static @NotNull Adapter use(final @NotNull DynamoDbClient client, boolean consistentRead) {
+        return translate(new DynamoDbAdapter(client, false, consistentRead));
     }
 
     /**
@@ -29,7 +41,18 @@ public final class DynamoDb {
      * @return adapter that owns and closes its client
      */
     public static @NotNull Adapter createDefault() {
-        return translate(new DynamoDbAdapter(DynamoDbClient.create(), true));
+        return createDefault(true);
+    }
+
+    /**
+     * Creates an owned default client with a configurable read consistency policy.
+     *
+     * @param consistentRead true for strongly consistent reads, false for eventually consistent reads
+     * @return adapter that owns and closes its client
+     * @since 1.3.0
+     */
+    public static @NotNull Adapter createDefault(boolean consistentRead) {
+        return translate(new DynamoDbAdapter(DynamoDbClient.create(), true, consistentRead));
     }
 
     private static Adapter translate(Adapter adapter) {

@@ -36,13 +36,19 @@ final class DynamoDbAdapter implements Adapter {
 
     private final DynamoDbClient client;
     private final boolean owned;
+    private final boolean consistentRead;
     private final Map<String, EntityDefinition> definitions = new ConcurrentHashMap<>();
     private final EntityStore store = new Store();
     private final SchemaManager schemas = new Schemas();
 
     DynamoDbAdapter(DynamoDbClient client, boolean owned) {
+        this(client, owned, true);
+    }
+
+    DynamoDbAdapter(DynamoDbClient client, boolean owned, boolean consistentRead) {
         this.client = Objects.requireNonNull(client);
         this.owned = owned;
+        this.consistentRead = consistentRead;
     }
 
     @Override
@@ -178,16 +184,14 @@ final class DynamoDbAdapter implements Adapter {
             if (definition != null) {
                 final String partitionField = partitionKey(definition).name();
                 final FieldDefinition sort = sortKey(definition);
-                final Map<String, Object> keyValues =
-                        exactKeyEquality(query.predicate(), partitionField, sort == null ? null : sort.name());
-                if (keyValues != null && keyValues.get(partitionField) != null) {
-                    return query(entity, query, partitionField, sort == null ? null : sort.name(), keyValues);
-                }
+                QueryAccess access = queryAccess(query.predicate(), partitionField, sort == null ? null : sort.name());
+                if (access != null)
+                    return query(entity, query, partitionField, sort == null ? null : sort.name(), access);
             }
             Expression expression = expression(query.predicate());
             ScanRequest.Builder request = ScanRequest.builder()
                     .tableName(entity)
-                    .consistentRead(true)
+                    .consistentRead(consistentRead)
                     .limit(query.limit() == 0 ? 500 : query.limit());
             if (expression.text != null) {
                 request.filterExpression(expression.text).expressionAttributeNames(expression.names);
@@ -217,24 +221,38 @@ final class DynamoDbAdapter implements Adapter {
                 final Query query,
                 final String partitionField,
                 final String sortField,
-                final Map<String, Object> keyValues) {
+                final QueryAccess access) {
             final Map<String, String> names = new LinkedHashMap<>();
             final Map<String, AttributeValue> values = new LinkedHashMap<>();
             names.put("#pk", partitionField);
-            values.put(":pk", encode(keyValues.get(partitionField)));
+            values.put(":pk", encode(access.partition()));
             final StringBuilder keyCondition = new StringBuilder("#pk = :pk");
-            if (sortField != null && keyValues.containsKey(sortField)) {
+            if (access.sort() != null) {
                 names.put("#sk", sortField);
-                values.put(":sk", encode(keyValues.get(sortField)));
-                keyCondition.append(" AND #sk = :sk");
+                values.put(":sk", encode(access.sort().value()));
+                String operator = switch (access.sort().operator()) {
+                    case EQ -> "=";
+                    case LT -> "<";
+                    case LTE -> "<=";
+                    case GT -> ">";
+                    case GTE -> ">=";
+                    case STARTS_WITH -> null;
+                    default -> throw new IllegalStateException("Invalid sort key condition");
+                };
+                if (operator == null) keyCondition.append(" AND begins_with(#sk, :sk)");
+                else keyCondition.append(" AND #sk ").append(operator).append(" :sk");
             }
+            Expression filter = expression(access.filter());
+            names.putAll(filter.names());
+            values.putAll(filter.values());
             final QueryRequest.Builder request = QueryRequest.builder()
                     .tableName(entity)
-                    .consistentRead(true)
+                    .consistentRead(consistentRead)
                     .keyConditionExpression(keyCondition.toString())
                     .expressionAttributeNames(names)
                     .expressionAttributeValues(values)
                     .limit(query.limit() == 0 ? 500 : query.limit());
+            if (filter.text() != null) request.filterExpression(filter.text());
             if (!query.projection().isEmpty()) {
                 final List<String> projected =
                         new ArrayList<>(query.projection().size());
@@ -758,30 +776,58 @@ final class DynamoDbAdapter implements Adapter {
             junction.predicates().forEach(child -> collectKey(child, required, result));
     }
 
-    private static Map<String, Object> exactKeyEquality(
-            final Predicate predicate, final String partitionField, final String sortField) {
-        final Set<String> keyFields = new HashSet<>();
-        keyFields.add(partitionField);
-        if (sortField != null) keyFields.add(sortField);
-        final Map<String, Object> values = new LinkedHashMap<>();
-        if (!collectExactKeyEquality(predicate, keyFields, values) || !values.containsKey(partitionField)) return null;
-        return values;
+    private record QueryAccess(Object partition, Predicate.Comparison sort, Predicate filter) {}
+
+    private static QueryAccess queryAccess(Predicate predicate, String partition, String sort) {
+        List<Predicate> terms = new ArrayList<>();
+        conjuncts(predicate, terms);
+        Predicate.Comparison partitionCondition = null;
+        Predicate.Comparison sortCondition = null;
+        List<Predicate> filters = new ArrayList<>();
+        for (Predicate term : terms) {
+            if (term instanceof Predicate.All) continue;
+            if (term instanceof Predicate.Comparison comparison
+                    && comparison.field().equals(partition)) {
+                if (partitionCondition != null
+                        || comparison.operator() != Predicate.Operator.EQ
+                        || comparison.value() == null) return null;
+                partitionCondition = comparison;
+            } else if (term instanceof Predicate.Comparison comparison
+                    && comparison.field().equals(sort)) {
+                if (sortCondition != null
+                        || comparison.value() == null
+                        || !Set.of(
+                                        Predicate.Operator.EQ,
+                                        Predicate.Operator.LT,
+                                        Predicate.Operator.LTE,
+                                        Predicate.Operator.GT,
+                                        Predicate.Operator.GTE,
+                                        Predicate.Operator.STARTS_WITH)
+                                .contains(comparison.operator())) return null;
+                sortCondition = comparison;
+            } else {
+                // DynamoDB forbids key attributes in Query filters. Preserve such predicates using Scan.
+                if (referencesKey(term, partition, sort)) return null;
+                filters.add(term);
+            }
+        }
+        if (partitionCondition == null) return null;
+        Predicate filter = filters.isEmpty() ? Predicate.all() : new Predicate.Junction(true, filters);
+        return new QueryAccess(partitionCondition.value(), sortCondition, filter);
     }
 
-    private static boolean collectExactKeyEquality(
-            final Predicate predicate, final Set<String> keyFields, final Map<String, Object> values) {
-        if (predicate instanceof Predicate.Comparison comparison) {
-            if (comparison.operator() != Predicate.Operator.EQ
-                    || !keyFields.contains(comparison.field())
-                    || values.containsKey(comparison.field())) return false;
-            values.put(comparison.field(), comparison.value());
-            return true;
-        }
-        if (!(predicate instanceof Predicate.Junction junction) || !junction.and()) return false;
-        for (final Predicate child : junction.predicates()) {
-            if (!collectExactKeyEquality(child, keyFields, values)) return false;
-        }
-        return true;
+    private static void conjuncts(Predicate predicate, List<Predicate> terms) {
+        if (predicate instanceof Predicate.Junction junction && junction.and())
+            junction.predicates().forEach(child -> conjuncts(child, terms));
+        else terms.add(predicate);
+    }
+
+    private static boolean referencesKey(Predicate predicate, String partition, String sort) {
+        if (predicate instanceof Predicate.Comparison comparison)
+            return comparison.field().equals(partition) || comparison.field().equals(sort);
+        if (predicate instanceof Predicate.Junction junction)
+            return junction.predicates().stream().anyMatch(child -> referencesKey(child, partition, sort));
+        return false;
     }
 
     private record Expression(String text, Map<String, String> names, Map<String, AttributeValue> values) {}

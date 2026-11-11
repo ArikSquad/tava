@@ -136,7 +136,8 @@ do {
 } while (cursor != null);
 ```
 
-Treat cursors as opaque values and pass them back with the same filter and sort. Cursors
+Treat cursors as opaque values and pass them back with the same filter, sort, projection,
+and page size on the same adapter and entity. Changing any of these invalidates the cursor. Cursors
 continue the result ordering; they are not a database snapshot. Inserts, deletes, or
 changes to sort values while paging may affect later pages. When sorting, include a
 stable unique field if your application needs repeatable ordering across runs.
@@ -230,10 +231,12 @@ tava.transaction(tx -> {
 
 Synchronous I/O entry points carry `@Blocking`. Async methods such as
 `findByIdAsync`, `insertAsync`, and `upsertAsync` use the executor supplied to
-`Tava.open(adapter, executor)`; `Tava.open(adapter)` uses the common fork-join pool.
+`Tava.open(adapter, executor)`; `Tava.open(adapter)` uses virtual threads for blocking database I/O.
 Server and game applications should provide a dedicated database executor rather
 than use their main/event-loop thread. Closing `Tava` waits for active operations to
-finish and closes its adapter. Do not close it from inside an active operation.
+finish and closes its adapter. `tava.close(Duration.ofSeconds(10))` bounds the wait
+for active operations and returns `false` on timeout, leaving the instance open. Driver
+cleanup itself still uses the driver's timeout policy. Do not close it from inside an active operation.
 
 ## Value mapping and errors
 

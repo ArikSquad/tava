@@ -1,4 +1,4 @@
-# Tava 1.2.2
+# Tava 1.3.0
 
 Tava is a modular Java 21 database toolkit with one canonical entity model across relational,
 document, and key-value databases.
@@ -13,7 +13,7 @@ repositories {
 }
 
 dependencies {
-    implementation(platform("eu.mikart.tava:tava-bom:1.2.2"))
+    implementation(platform("eu.mikart.tava:tava-bom:1.3.0"))
     implementation("eu.mikart.tava:tava-core")
     implementation("eu.mikart.tava:tava-postgres")
     implementation("eu.mikart.tava:tava-mongodb")
