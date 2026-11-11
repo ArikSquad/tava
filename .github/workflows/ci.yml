@@ -23,7 +23,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - uses: gradle/actions/setup-gradle@v6.4.0
+      - uses: gradle/actions/setup-gradle@v6.4.1
       - name: Require Docker for integration tests
         if: ${{ !contains(fromJSON('["core", "h2", "sqlite"]'), matrix.module) }}
         run: docker info
@@ -49,7 +49,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - uses: gradle/actions/setup-gradle@v6.4.0
+      - uses: gradle/actions/setup-gradle@v6.4.1
       - uses: actions/download-artifact@v8.0.2
         with:
           pattern: tests-*
@@ -78,5 +78,5 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - uses: gradle/actions/setup-gradle@v6.4.0
+      - uses: gradle/actions/setup-gradle@v6.4.1
       - run: ./gradlew apiCompatibility javadoc --no-daemon
