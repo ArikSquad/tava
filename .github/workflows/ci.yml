@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [core, h2, sqlite, postgres, mysql, mongodb, dynamodb, sqlserver, oracle]
+        module: [core, jdbc, h2, sqlite, postgres, mysql, mongodb, dynamodb, sqlserver, oracle]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-java@v6.1.0
@@ -25,12 +29,12 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v6.4.1
       - name: Require Docker for integration tests
-        if: ${{ !contains(fromJSON('["core", "h2", "sqlite"]'), matrix.module) }}
+        if: ${{ !contains(fromJSON('["core", "jdbc", "h2", "sqlite"]'), matrix.module) }}
         run: docker info
-      - name: Check adapter
-        run: ./gradlew :tava-${{ matrix.module }}:check -PrequireIntegrationTests --no-daemon
+      - name: Check module
+        run: ./gradlew :tava-${{ matrix.module }}:check :tava-${{ matrix.module }}:apiCompatibility -PrequireIntegrationTests --build-cache
       - name: Upload test results and coverage data
-        if: always()
+        if: ${{ !cancelled() && matrix.module != 'jdbc' }}
         uses: actions/upload-artifact@v7.0.2
         with:
           name: tests-${{ matrix.module }}
@@ -61,22 +65,10 @@ jobs:
             cp "coverage-data/tests-$module/jacoco/test.exec" "tava-$module/build/jacoco/test.exec"
           done
       - name: Verify aggregate coverage
-        run: ./gradlew classes jacocoCoverageVerification -x test --no-daemon
+        run: ./gradlew classes jacocoCoverageVerification -x test --build-cache --parallel
       - name: Upload coverage reports
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage
           path: build/reports/jacoco
-
-  api-compatibility:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-java@v6.1.0
-        with:
-          distribution: temurin
-          java-version: "21"
-      - uses: gradle/actions/setup-gradle@v6.4.1
-      - run: ./gradlew apiCompatibility javadoc --no-daemon
