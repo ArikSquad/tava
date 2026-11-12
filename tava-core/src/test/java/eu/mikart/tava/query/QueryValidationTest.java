@@ -1,12 +1,29 @@
 package eu.mikart.tava.query;
 
-import org.junit.jupiter.api.Test;
-
-import java.util.Collection;
-import java.util.List;
-import java.util.Set;
-
 import static org.junit.jupiter.api.Assertions.*;
+
+import eu.mikart.tava.TavaException;
+import eu.mikart.tava.data.Page;
+import eu.mikart.tava.schema.annotation.Field;
+import eu.mikart.tava.spi.KeysetCursor;
+import java.math.BigDecimal;
+import java.sql.Date;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Set;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
 
 class QueryValidationTest {
     private static final Predicate.Operator IS_NULL = Predicate.Operator.IS_NULL;
@@ -18,6 +35,7 @@ class QueryValidationTest {
     private static final Predicate.Operator NE = Predicate.Operator.NE;
     private static final Predicate.Operator LT = Predicate.Operator.LT;
     private static final Predicate.Operator GTE = Predicate.Operator.GTE;
+
     @Test
     void rejectsInvalidSorts() {
         assertThrows(IllegalArgumentException.class, () -> Sort.asc(" "));
@@ -70,9 +88,7 @@ class QueryValidationTest {
         Sort sort2 = Sort.desc("field2");
         Sort sort3 = Sort.asc("field3");
 
-        Query query = Query.builder()
-                .sort(sort1, sort2, sort3)
-                .build();
+        Query query = Query.builder().sort(sort1, sort2, sort3).build();
         assertEquals(3, query.sorting().size());
         assertEquals(Sort.Direction.ASC, query.sorting().get(0).direction());
         assertEquals(Sort.Direction.DESC, query.sorting().get(1).direction());
@@ -88,7 +104,8 @@ class QueryValidationTest {
         Query queryLimitZero = Query.builder().limit(0).build();
         assertEquals(0, queryLimitZero.limit());
 
-        Query queryWithCursorAndLimit = Query.builder().limit(10).cursor("cursor123").build();
+        Query queryWithCursorAndLimit =
+                Query.builder().limit(10).cursor("cursor123").build();
         assertEquals(10, queryWithCursorAndLimit.limit());
         assertEquals("cursor123", queryWithCursorAndLimit.cursor());
 
@@ -98,7 +115,8 @@ class QueryValidationTest {
         Query queryNoProjection = Query.builder().build();
         assertTrue(queryNoProjection.projection().isEmpty());
 
-        assertThrows(IllegalArgumentException.class, () -> Query.builder().limit(-1).build());
+        assertThrows(
+                IllegalArgumentException.class, () -> Query.builder().limit(-1).build());
 
         Query allQuery = Query.all();
         assertEquals(Predicate.all(), allQuery.predicate());
@@ -107,38 +125,103 @@ class QueryValidationTest {
     }
 
     @Test
+    void keysetCursorRoundTripsNestedAndTypedValues() {
+        Query query =
+                Query.builder().where(Predicate.eq("active", true)).limit(8).build();
+        List<Sort> order = List.of(Sort.asc("position"));
+        Map<String, Object> nested = new LinkedHashMap<>();
+        nested.put("values", List.of("text", 3, Collections.singletonList(null)));
+        nested.put("flag", false);
+        List<Object> position = List.of(List.of(
+                "text",
+                Sort.Direction.DESC,
+                true,
+                3,
+                4L,
+                new BigDecimal("1.250"),
+                2.5d,
+                UUID.fromString("17d9e58e-b821-4596-a92c-c5f50c41d2b2"),
+                new byte[] {1, 2},
+                Timestamp.from(Instant.parse("2026-11-09T12:00:00Z")),
+                Date.valueOf("2026-11-09"),
+                Instant.parse("2026-11-09T12:00:00Z"),
+                OffsetDateTime.of(2026, 11, 9, 12, 0, 0, 0, ZoneOffset.UTC),
+                LocalDate.parse("2026-11-09"),
+                LocalDateTime.parse("2026-11-09T12:00:00"),
+                nested,
+                Collections.singletonList(null)));
+
+        String token = KeysetCursor.encode("adapter:entity", query, order, position);
+        List<Object> decoded = KeysetCursor.decode(token, "adapter:entity", query, order);
+
+        assertEquals(1, decoded.size());
+        List<?> values = (List<?>) decoded.getFirst();
+        assertEquals("text", values.get(0));
+        assertEquals("DESC", values.get(1));
+        assertEquals(true, values.get(2));
+        assertEquals(3, values.get(3));
+        assertEquals(4L, values.get(4));
+        assertEquals(new BigDecimal("1.250"), values.get(5));
+        assertEquals(2.5d, values.get(6));
+        assertEquals(UUID.fromString("17d9e58e-b821-4596-a92c-c5f50c41d2b2"), values.get(7));
+        assertArrayEquals(new byte[] {1, 2}, (byte[]) values.get(8));
+        assertEquals(Timestamp.from(Instant.parse("2026-11-09T12:00:00Z")), values.get(9));
+        assertEquals(LocalDate.parse("2026-11-09"), values.get(10));
+        assertEquals(Instant.parse("2026-11-09T12:00:00Z"), values.get(11));
+        assertEquals(OffsetDateTime.of(2026, 11, 9, 12, 0, 0, 0, ZoneOffset.UTC), values.get(12));
+        assertEquals(LocalDate.parse("2026-11-09"), values.get(13));
+        assertEquals(LocalDateTime.parse("2026-11-09T12:00:00"), values.get(14));
+        assertEquals(nested, values.get(15));
+        assertEquals(Collections.singletonList(null), values.get(16));
+    }
+
+    @Test
+    void keysetCursorRejectsMismatchedAndUnsupportedValues() {
+        Query query = Query.all();
+        List<Sort> order = List.of(Sort.asc("id"));
+        String token = KeysetCursor.encode("adapter:entity", query, order, Collections.singletonList(null));
+
+        assertNull(KeysetCursor.decode(token, "adapter:entity", query, order).getFirst());
+        assertThrows(IllegalArgumentException.class, () -> KeysetCursor.decode(token, "other:entity", query, order));
+        assertThrows(
+                IllegalArgumentException.class, () -> KeysetCursor.decode("invalid", "adapter:entity", query, order));
+        assertThrows(
+                IllegalArgumentException.class, () -> KeysetCursor.encode("adapter:entity", query, order, List.of()));
+        assertThrows(
+                TavaException.Capability.class,
+                () -> KeysetCursor.encode("adapter:entity", query, order, List.of(new Object())));
+    }
+
+    @Test
     void mutationEdgeCases() {
-        Mutation mutation = Mutation.builder()
-                .set("field", null)
-                .build();
+        Mutation mutation = Mutation.builder().set("field", null).build();
         assertNull(mutation.values().get("field"));
 
         Mutation increment = Mutation.builder()
                 .increment(new FieldRef<>("count", Integer.class), 5)
                 .build();
         assertEquals(1, increment.operations().size());
-        assertEquals(Mutation.Kind.INCREMENT, increment.operations().get("count").kind());
+        assertEquals(
+                Mutation.Kind.INCREMENT, increment.operations().get("count").kind());
         assertEquals(5, increment.operations().get("count").value());
 
-        assertThrows(NullPointerException.class, () -> Mutation.builder()
-                .increment(new FieldRef<>("count", Integer.class), null));
+        assertThrows(
+                NullPointerException.class,
+                () -> Mutation.builder().increment(new FieldRef<>("count", Integer.class), null));
 
-        FieldRef<Collection<String>> tags = stringCollectionField("tags");
-        Mutation appendIfAbsent = Mutation.builder()
-                .appendIfAbsent(tags, "newTag")
-                .build();
-        assertEquals(Mutation.Kind.APPEND_IF_ABSENT, appendIfAbsent.operations().get("tags").kind());
+        FieldRef<Collection<String>> tags = FieldRef.collection("tags", String.class);
+        Mutation appendIfAbsent =
+                Mutation.builder().appendIfAbsent(tags, "newTag").build();
+        assertEquals(
+                Mutation.Kind.APPEND_IF_ABSENT,
+                appendIfAbsent.operations().get("tags").kind());
         assertEquals("newTag", appendIfAbsent.operations().get("tags").value());
 
-        Mutation remove = Mutation.builder()
-                .remove(tags, "oldTag")
-                .build();
+        Mutation remove = Mutation.builder().remove(tags, "oldTag").build();
         assertEquals(Mutation.Kind.REMOVE, remove.operations().get("tags").kind());
         assertEquals("oldTag", remove.operations().get("tags").value());
 
-        Mutation clear = Mutation.builder()
-                .set("tags", List.of())
-                .build();
+        Mutation clear = Mutation.builder().set("tags", List.of()).build();
         assertEquals(List.of(), clear.values().get("tags"));
     }
 
@@ -156,8 +239,7 @@ class QueryValidationTest {
 
         Predicate nestedAnd = Predicate.and(
                 Predicate.and(Predicate.eq("x", 1), Predicate.eq("y", 2)),
-                Predicate.or(Predicate.eq("z", 3), Predicate.eq("w", 4))
-        );
+                Predicate.or(Predicate.eq("z", 3), Predicate.eq("w", 4)));
         assertTrue(nestedAnd instanceof Predicate.Junction);
         List<Predicate> topPredicates = ((Predicate.Junction) nestedAnd).predicates();
         assertEquals(2, topPredicates.size());
@@ -167,15 +249,8 @@ class QueryValidationTest {
         assertFalse(((Predicate.Junction) topPredicates.get(1)).and());
 
         Predicate deepNesting = Predicate.and(
-                Predicate.or(
-                        Predicate.and(Predicate.eq("a", 1)),
-                        Predicate.or(Predicate.eq("b", 2))
-                ),
-                Predicate.and(
-                        Predicate.or(Predicate.eq("c", 3)),
-                        Predicate.and(Predicate.eq("d", 4))
-                )
-        );
+                Predicate.or(Predicate.and(Predicate.eq("a", 1)), Predicate.or(Predicate.eq("b", 2))),
+                Predicate.and(Predicate.or(Predicate.eq("c", 3)), Predicate.and(Predicate.eq("d", 4))));
         assertTrue(deepNesting instanceof Predicate.Junction);
     }
 
@@ -215,8 +290,78 @@ class QueryValidationTest {
         assertEquals("ids", ((Predicate.Comparison) inWithFieldRef).field());
     }
 
-    @SuppressWarnings("unchecked")
-    private static FieldRef<Collection<String>> stringCollectionField(String name) {
-        return (FieldRef<Collection<String>>) (FieldRef<?>) new FieldRef<>(name, Collection.class);
+    @Test
+    void typedFieldsBuildPortableExpressions() {
+        var score = FieldRef.of("score", Integer.class);
+        var name = FieldRef.of("name", String.class);
+        var tags = FieldRef.collection("tags", String.class);
+        assertEquals(Predicate.ne("score", 3), score.ne(3));
+        assertEquals(Predicate.lt("score", 3), score.lt(3));
+        assertEquals(Predicate.lte("score", 3), Predicate.lte(score, 3));
+        assertEquals(Predicate.gt("score", 3), Predicate.gt(score, 3));
+        assertEquals(Predicate.gte("score", 3), score.gte(3));
+        assertEquals(Predicate.in("score", List.of(1, 3)), score.in(List.of(1, 3)));
+        assertEquals(Predicate.isNull("score"), score.isNull());
+        assertEquals(Predicate.isNotNull("score"), score.isNotNull());
+        assertEquals(Predicate.startsWith("name", "A"), Predicate.startsWith(name, "A"));
+        assertEquals(Predicate.contains("name", "A"), Predicate.contains(name, "A"));
+        assertEquals(Predicate.contains("tags", "A"), Predicate.contains(tags, "A"));
+        Query query = Query.builder()
+                .project(score, name)
+                .sort(score.desc(), name.asc())
+                .build();
+        assertEquals(List.of("score", "name"), query.projection());
+        assertEquals(List.of(Sort.desc("score"), Sort.asc("name")), query.sorting());
+    }
+
+    record MappedFields(@Field("display_name") String name, int score) {}
+
+    @Test
+    void recordFieldsResolveMappedNamesAndRejectWrongTypes() {
+        assertEquals(FieldRef.of("display_name", String.class), FieldRef.of(MappedFields.class, "name", String.class));
+        assertEquals(FieldRef.of("score", Integer.class), FieldRef.of(MappedFields.class, "score", Integer.class));
+        assertThrows(IllegalArgumentException.class, () -> FieldRef.of(MappedFields.class, "missing", String.class));
+        assertThrows(IllegalArgumentException.class, () -> FieldRef.of(MappedFields.class, "score", String.class));
+    }
+
+    @Test
+    void boundPagesRetainQueryAndIncludeEmptyPages() {
+        Query initial = Query.builder()
+                .where(Predicate.eq("active", true))
+                .project("id")
+                .sort(Sort.asc("id"))
+                .limit(7)
+                .cursor("start")
+                .build();
+        var requests = new ArrayList<Query>();
+        var pages = Pages.<Integer>cursor(initial, query -> {
+            requests.add(query);
+            return requests.size() == 1 ? new Page<>(List.of(), "second") : new Page<>(List.of(42), null);
+        });
+        assertTrue(requests.isEmpty());
+        assertTrue(pages.hasNext());
+        assertTrue(requests.isEmpty());
+        assertEquals(List.of(), pages.next().items());
+        assertEquals(List.of(42), pages.next().items());
+        assertFalse(pages.hasNext());
+        assertThrows(NoSuchElementException.class, pages::next);
+        assertEquals(List.of(initial, initial.withCursor("second")), requests);
+        assertEquals("start", initial.cursor());
+    }
+
+    @Test
+    void pageAndItemTraversalRejectRepeatedCursors() {
+        var cursor = Pages.<Integer>cursor(Query.all(), query -> new Page<>(List.of(), "repeat"));
+        cursor.next();
+        assertThrows(IllegalStateException.class, cursor::next);
+        assertFalse(cursor.hasNext());
+        try (var stream = Pages.<Integer>stream(Query.all(), query -> new Page<>(List.of(), "repeat"))) {
+            assertThrows(IllegalStateException.class, stream::count);
+        }
+        try (var stream = Pages.<Integer>stream(
+                Query.all(),
+                query -> query.cursor() == null ? new Page<>(List.of(), "next") : new Page<>(List.of(42), null))) {
+            assertEquals(List.of(42), stream.toList());
+        }
     }
 }

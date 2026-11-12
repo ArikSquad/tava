@@ -1,512 +1,477 @@
 package eu.mikart.tava.migration;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import eu.mikart.tava.Tava;
 import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.h2.H2;
-import eu.mikart.tava.migration.Migration;
-import eu.mikart.tava.migration.MigrationOperationResult;
-import eu.mikart.tava.migration.MigrationResult;
-import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
-import eu.mikart.tava.query.Query;
+import eu.mikart.tava.schema.EntityDefinition;
 import eu.mikart.tava.schema.Schema;
-import org.junit.jupiter.api.Test;
-
+import eu.mikart.tava.schema.SchemaRenames;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
 
 class MigrationTest {
+    private static final Schema EMPTY = new Schema(List.of());
 
-    private Tava openTava(String namespace) {
-        return Tava.open(H2.memory(namespace));
-    }
-
-    private String uniqueEntity(String prefix) {
-        return (prefix + UUID.randomUUID().toString().replace("-", "").substring(0, 12))
-                .toLowerCase(java.util.Locale.ROOT);
+    @Test
+    void movesToTargetsInBothDirectionsAndOnlyRunsPendingVersions() {
+        var calls = new ArrayList<String>();
+        var history = SchemaHistory.builder()
+                .version(
+                        "z-first",
+                        EMPTY,
+                        change -> change.up(context -> calls.add("up1")).down(context -> calls.add("down1")))
+                .version(
+                        "a-second",
+                        EMPTY,
+                        change -> change.up(context -> calls.add("up2")).down(context -> calls.add("down2")))
+                .version(
+                        "third",
+                        EMPTY,
+                        change -> change.up(context -> calls.add("up3")).down(context -> calls.add("down3")))
+                .build();
+        try (Tava database = open()) {
+            assertTrue(history.current(database).isEmpty());
+            assertTrue(database.schema().inspect().entities().isEmpty());
+            history.to(database, "a-second");
+            assertEquals(List.of("up1", "up2"), calls);
+            assertEquals("a-second", history.current(database).orElseThrow());
+            history.up(database);
+            history.up(database);
+            history.to(database, "z-first");
+            assertEquals(List.of("up1", "up2", "up3", "down3", "down2"), calls);
+            history.down(database);
+            history.down(database);
+            assertEquals("down1", calls.getLast());
+            assertTrue(history.current(database).isEmpty());
+            history.to(database, "a-second");
+            assertEquals(List.of("up1", "up2"), calls.subList(calls.size() - 2, calls.size()));
+        }
     }
 
     @Test
-    void migrationWithNoopUpAndDownRollback() {
-        String entity = uniqueEntity("rollback");
-        Migration create = Migration.builder(entity + "_create")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert initial", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "Initial").build()))
-                .down("Delete initial", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
+    void rollbackRestoresRenamedSchemaAndPreservesRows() {
+        Schema before = schema("name");
+        Schema after = schema("display_name");
+        var history = SchemaHistory.builder()
+                .version(
+                        "one",
+                        before,
+                        change -> change.up(context -> context.apply(context.next()))
+                                .down(context -> sql(context, "DROP TABLE IF EXISTS \"accounts\"")))
+                .version(
+                        "two",
+                        after,
+                        change -> change.up(context -> context.apply(
+                                        context.next(),
+                                        SchemaRenames.builder()
+                                                .field("accounts", "name", "display_name")
+                                                .build()))
+                                .down(context -> context.apply(
+                                        context.previous(),
+                                        SchemaRenames.builder()
+                                                .field("accounts", "display_name", "name")
+                                                .build())))
                 .build();
+        try (Tava database = open()) {
+            history.to(database, "one");
+            database.records("accounts")
+                    .insert(EntityRecord.builder()
+                            .set("id", "a")
+                            .set("name", "Ada")
+                            .build());
+            history.up(database);
+            assertEquals(
+                    "Ada",
+                    database.records("accounts")
+                            .findOne(Predicate.all())
+                            .orElseThrow()
+                            .get("display_name"));
+            history.down(database);
+            assertEquals(
+                    "Ada",
+                    database.records("accounts")
+                            .findOne(Predicate.all())
+                            .orElseThrow()
+                            .get("name"));
+            history.down(database);
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> database.schema().inspect().entity("accounts"));
+        }
+    }
 
-        try (Tava tava = openTava(entity)) {
-            tava.migrations().apply(create);
-            assertEquals(1, tava.records(entity).find(Query.all()).items().size());
+    @Test
+    void resumesFailedUpWithoutRepeatingCompletedStepsAfterReopeningDatabase() {
+        String name = UUID.randomUUID().toString();
+        var first = new AtomicInteger();
+        var attempts = new AtomicInteger();
+        var later = new AtomicInteger();
+        var history = SchemaHistory.builder()
+                .version(
+                        "one",
+                        EMPTY,
+                        change -> change.up(context -> first.incrementAndGet())
+                                .up(context -> {
+                                    if (attempts.incrementAndGet() == 1) throw new IllegalStateException("interrupted");
+                                })
+                                .down(context -> {}))
+                .version(
+                        "two",
+                        EMPTY,
+                        change -> change.up(context -> later.incrementAndGet()).down(context -> {}))
+                .build();
+        try (Tava database = Tava.open(H2.memory(name))) {
+            assertThrows(IllegalStateException.class, () -> history.up(database));
+            assertEquals(1, first.get());
+            assertEquals(0, later.get());
+            assertThrows(IllegalStateException.class, () -> history.current(database));
+            assertThrows(IllegalStateException.class, () -> history.down(database));
+        }
+        try (Tava database = Tava.open(H2.memory(name))) {
+            history.up(database);
+            assertEquals(1, first.get());
+            assertEquals(2, attempts.get());
+            assertEquals(1, later.get());
+            assertEquals("two", history.current(database).orElseThrow());
+        }
+    }
 
-            Migration noopUpWithDown = Migration.builder(entity + "_noop_up_with_down")
-                    .up("No-op up", ctx -> {})
-                    .down("Delete all", ctx -> ctx.delete(entity, Predicate.all()))
+    @Test
+    void resumesFailedDownAndDoesNotAcceptDirectionChangeMidTransition() {
+        var completed = new AtomicInteger();
+        var attempts = new AtomicInteger();
+        var history = SchemaHistory.builder()
+                .version("one", EMPTY, change -> change.up(context -> {}).down(context -> {}))
+                .version(
+                        "two",
+                        EMPTY,
+                        change -> change.up(context -> {})
+                                .down(context -> completed.incrementAndGet())
+                                .down(context -> {
+                                    if (attempts.incrementAndGet() == 1) throw new IllegalStateException("interrupted");
+                                }))
+                .build();
+        try (Tava database = open()) {
+            history.up(database);
+            assertThrows(IllegalStateException.class, () -> history.down(database));
+            assertThrows(IllegalStateException.class, () -> history.up(database));
+            history.down(database);
+            assertEquals(1, completed.get());
+            assertEquals(2, attempts.get());
+            assertEquals("one", history.current(database).orElseThrow());
+            history.up(database);
+            assertEquals("two", history.current(database).orElseThrow());
+        }
+    }
+
+    @Test
+    void preflightsWholeRollbackRouteBeforeUndoingAnything() {
+        var down = new AtomicInteger();
+        var history = SchemaHistory.builder()
+                .version("one", EMPTY, change -> change.up(context -> {}))
+                .version("two", EMPTY, change -> change.up(context -> {}))
+                .version("three", EMPTY, change -> change.up(context -> {}).down(context -> down.incrementAndGet()))
+                .build();
+        try (Tava database = open()) {
+            history.up(database);
+            assertThrows(IllegalStateException.class, () -> history.to(database, "one"));
+            assertEquals(0, down.get());
+            assertEquals("three", history.current(database).orElseThrow());
+            history.down(database);
+            assertEquals(1, down.get());
+            assertThrows(IllegalStateException.class, () -> history.down(database));
+        }
+    }
+
+    @Test
+    void finalVerificationIsRetriedWithoutRepeatingActionsAndCannotBeSkipped() {
+        var calls = new AtomicInteger();
+        Schema target = schema("name");
+        var history = SchemaHistory.builder()
+                .version(
+                        "one",
+                        target,
+                        change -> change.up(context -> calls.incrementAndGet()).down(context -> {}))
+                .build();
+        try (Tava database = open()) {
+            assertThrows(IllegalStateException.class, () -> history.up(database));
+            assertThrows(IllegalStateException.class, () -> history.up(database));
+            assertEquals(1, calls.get());
+            database.schema().ensure(target);
+            history.up(database);
+            assertEquals("one", history.current(database).orElseThrow());
+            assertThrows(IllegalStateException.class, () -> history.down(database));
+            database.nativeAccess().withNative(Connection.class, connection -> {
+                try (var statement = connection.createStatement()) {
+                    statement.execute("DROP TABLE \"accounts\"");
+                } catch (SQLException failure) {
+                    throw new IllegalStateException(failure);
+                }
+                return null;
+            });
+            history.down(database);
+            assertTrue(history.current(database).isEmpty());
+        }
+    }
+
+    @Test
+    void refusesFakeRollbackThatOnlyAppliesThePreviousAdditiveSchema() {
+        Schema first = schema("name");
+        Schema second = Schema.builder()
+                .entity("accounts", entity -> {
+                    entity.string("id").identity();
+                    entity.string("name");
+                    entity.string("status");
+                })
+                .build();
+        var history = SchemaHistory.builder()
+                .version("one", first, change -> change.up(context -> context.apply(context.next())))
+                .version(
+                        "two",
+                        second,
+                        change -> change.up(context -> context.apply(context.next()))
+                                .down(context -> context.apply(context.previous())))
+                .build();
+        try (Tava database = open()) {
+            history.up(database);
+            assertThrows(IllegalStateException.class, () -> history.down(database));
+            assertThrows(IllegalStateException.class, () -> history.current(database));
+        }
+    }
+
+    @Test
+    void freezesSnapshotsAndSuppliesThemToBothDirections() {
+        var nested = new ArrayList<Object>(List.of("original"));
+        Schema source =
+                new Schema(List.of(new EntityDefinition("items", List.of(), List.of(), Map.of("nested", nested))));
+        var history = SchemaHistory.builder()
+                .version("one", source, change -> change.up(context -> {}))
+                .build();
+        nested.add("changed");
+        assertEquals(
+                List.of("original"),
+                history.versions().getFirst().next().entity("items").settings().get("nested"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> SchemaHistory.builder()
+                        .version(
+                                "one",
+                                new Schema(List.of(new EntityDefinition(
+                                        "items", List.of(), List.of(), Map.of("value", new StringBuilder())))),
+                                change -> change.up(context -> {})));
+        var seen = new ArrayList<Schema>();
+        var executable = SchemaHistory.builder()
+                .version(
+                        "one",
+                        EMPTY,
+                        change -> change.up(context -> {
+                                    seen.add(context.previous());
+                                    seen.add(context.next());
+                                })
+                                .down(context -> {
+                                    seen.add(context.previous());
+                                    seen.add(context.next());
+                                }))
+                .build();
+        try (Tava database = open()) {
+            executable.up(database);
+            executable.down(database);
+            assertEquals(List.of(EMPTY, EMPTY, EMPTY, EMPTY), seen);
+        }
+    }
+
+    @Test
+    void rejectsChangedSnapshotsAndActionDigestsBeforeAnyNewAction() {
+        var calls = new AtomicInteger();
+        var original = SchemaHistory.builder()
+                .version("one", EMPTY, change -> change.checksum("source-v1").up(context -> {}))
+                .build();
+        var changedCode = SchemaHistory.builder()
+                .version("one", EMPTY, change -> change.checksum("source-v2").up(context -> {}))
+                .version("two", EMPTY, change -> change.up(context -> calls.incrementAndGet()))
+                .build();
+        var changedSchema = SchemaHistory.builder()
+                .version("one", schema("new_name"), change -> change.up(context -> {}))
+                .build();
+        try (Tava database = open()) {
+            original.up(database);
+            assertThrows(IllegalStateException.class, () -> changedCode.up(database));
+            assertThrows(IllegalStateException.class, () -> changedSchema.down(database));
+            assertEquals(0, calls.get());
+        }
+    }
+
+    @Test
+    void keepsHistoricalChecksumsAfterRollback() {
+        var original = SchemaHistory.builder()
+                .version(
+                        "one",
+                        EMPTY,
+                        change -> change.checksum("original").up(context -> {}).down(context -> {}))
+                .build();
+        var changed = SchemaHistory.builder()
+                .version(
+                        "one",
+                        EMPTY,
+                        change -> change.checksum("changed").up(context -> {}).down(context -> {}))
+                .build();
+        try (Tava database = open()) {
+            original.up(database);
+            original.down(database);
+            assertTrue(original.current(database).isEmpty());
+            assertThrows(IllegalStateException.class, () -> changed.up(database));
+            original.up(database);
+            assertEquals("one", original.current(database).orElseThrow());
+        }
+    }
+
+    @Test
+    void rejectsMissingOrUnknownRecordedVersionsAndInvalidCheckpoints() {
+        var history = SchemaHistory.builder()
+                .version("one", EMPTY, change -> change.up(context -> {}))
+                .version("two", EMPTY, change -> change.up(context -> {}).down(context -> {}))
+                .build();
+        try (Tava database = open()) {
+            history.up(database);
+            database.records("_tava_migrations").delete(Predicate.eq("id", "one"));
+            assertThrows(IllegalStateException.class, () -> history.up(database));
+        }
+        try (Tava database = open()) {
+            history.up(database);
+            var missing = SchemaHistory.builder()
+                    .version("one", EMPTY, change -> change.up(context -> {}))
                     .build();
-
-            tava.migrations().apply(noopUpWithDown);
-            // Up is no-op, so data remains
-            assertEquals(1, tava.records(entity).find(Query.all()).items().size());
-
-            MigrationResult rollback = tava.migrations().rollback(noopUpWithDown);
-            assertTrue(rollback.applied());
-            // Down step deletes all
-            assertEquals(0, tava.records(entity).find(Query.all()).items().size());
+            assertThrows(IllegalStateException.class, () -> missing.up(database));
         }
     }
 
     @Test
-    void migrationWithMultipleUpDownStepsInterleaved() {
-        String entity = uniqueEntity("interleaved");
-        Migration migration = Migration.builder(entity + "_interleaved")
-                .upSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
-                .up("Insert A", ctx -> ctx.insert(entity, EntityRecord.builder().set("id", "a").build()))
-                .upSchema(Schema.builder().entity(entity, e -> e.string("name").field(100)).build())
-                .up("Update A name", ctx -> ctx.update(entity, Predicate.eq("id", "a"),
-                        Mutation.builder().set("name", "First").build()))
-                .up("Insert B", ctx -> ctx.insert(entity, EntityRecord.builder().set("id", "b").build()))
-                .upSchema(Schema.builder().entity(entity, e -> e.integer("score")).build())
-                .down("Delete B", ctx -> ctx.delete(entity, Predicate.eq("id", "b")))
-                .downSchema(Schema.builder().entity(entity, e -> e.integer("score")).build())
-                .down("Clear A name", ctx -> ctx.update(entity, Predicate.eq("id", "a"),
-                        Mutation.builder().set("name", null).build()))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("name").field(100)).build())
-                .down("Delete A", ctx -> ctx.delete(entity, Predicate.eq("id", "a")))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
+    void preservesUnrelatedStorageAndRefusesImplicitAdoption() {
+        Schema target = schema("name");
+        var history = SchemaHistory.builder()
+                .version("one", target, change -> change.up(context -> context.apply(context.next())))
                 .build();
-
-        try (Tava tava = openTava(entity)) {
-            tava.migrations().apply(migration);
-
-            var records = tava.records(entity).find(Query.all()).items();
-            assertEquals(2, records.size());
-            // Both records exist, but only "a" has name set
-            var recordA = records.stream().filter(r -> "a".equals(r.get("id"))).findFirst().orElseThrow();
-            var recordB = records.stream().filter(r -> "b".equals(r.get("id"))).findFirst().orElseThrow();
-            assertEquals("First", recordA.get("name"));
-            assertNull(recordA.get("score"));
-            assertNull(recordB.get("name"));
-            assertNull(recordB.get("score"));
-
-            MigrationResult rollback = tava.migrations().rollback(migration);
-            assertTrue(rollback.applied());
-            assertTrue(tava.records(entity).find(Query.all()).items().isEmpty());
+        try (Tava database = open()) {
+            database.schema()
+                    .ensure(Schema.builder()
+                            .entity("unrelated", entity -> entity.string("id").identity())
+                            .build());
+            history.up(database);
+            assertNotNull(database.schema().inspect().entity("unrelated"));
+        }
+        try (Tava database = open()) {
+            database.schema().ensure(target);
+            assertThrows(IllegalStateException.class, () -> history.up(database));
         }
     }
 
     @Test
-    void migrationFailureLeavesPartialDataWithoutRecordingAppliedMigration() {
-        String entity = uniqueEntity("failup");
-        Migration migration = Migration.builder(entity + "_fail_up")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert first", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "First").build()))
-                .up("Fail on second", ctx -> {
-                    throw new RuntimeException("Simulated failure");
-                })
-                .up("Never reached", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "2").set("name", "Second").build()))
-                .down("Delete first", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
-                .downSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
+    void holdsLockAcrossCallbacksAndReleasesItAfterFailure() {
+        String name = UUID.randomUUID().toString();
+        var reference = new AtomicReference<SchemaHistory>();
+        var fail = new AtomicBoolean(true);
+        var history = SchemaHistory.builder()
+                .version(
+                        "one",
+                        EMPTY,
+                        change -> change.up(context -> {
+                            try (Tava competitor = Tava.open(H2.memory(name))) {
+                                assertThrows(
+                                        IllegalStateException.class,
+                                        () -> reference.get().up(competitor));
+                            }
+                            if (fail.getAndSet(false)) throw new IllegalStateException("failed action");
+                        }))
                 .build();
-
-        try (Tava tava = openTava(entity)) {
-            assertThrows(RuntimeException.class, () -> tava.migrations().apply(migration));
-
-            assertTrue(tava.migrations().applied().isEmpty());
-            // Partial changes are committed (no automatic transaction rollback)
-            assertEquals(1, tava.records(entity).find(Query.all()).items().size());
-            assertEquals("First", tava.records(entity).find(Query.all()).items().getFirst().get("name"));
+        reference.set(history);
+        try (Tava database = Tava.open(H2.memory(name))) {
+            assertThrows(IllegalStateException.class, () -> history.up(database));
+            history.up(database);
+            assertEquals("one", history.current(database).orElseThrow());
         }
     }
 
     @Test
-    void migrationWithSchemaChangesAndDataMutationsInSameStep() {
-        String entity = uniqueEntity("schema_data");
-        Migration migration = Migration.builder(entity + "_schema_data")
-                .up("Create table and seed data", ctx -> {
-                    ctx.apply("Create entity", Schema.builder().entity(entity, e -> {
-                        e.string("id").identity().field(36);
-                        e.string("email").required().field(255);
-                        e.integer("score").required();
-                    }).build());
-
-                    ctx.insert(entity, EntityRecord.builder()
-                            .set("id", "1").set("email", "a@b.com").set("score", 10).build());
-                    ctx.insert(entity, EntityRecord.builder()
-                            .set("id", "2").set("email", "c@d.com").set("score", 20).build());
-                })
-                .down("Delete all data", ctx -> ctx.delete(entity, Predicate.all()))
+    void validatesDefinitionsAndTargetsBeforeDatabaseWork() {
+        assertThrows(
+                IllegalArgumentException.class, () -> SchemaHistory.builder().build());
+        assertThrows(
+                IllegalArgumentException.class, () -> SchemaHistory.builder().version("one", EMPTY, change -> {}));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> SchemaHistory.builder()
+                        .version(SchemaJournal.LOCK_ID, EMPTY, change -> change.up(context -> {})));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> SchemaHistory.builder()
+                        .version("one", EMPTY, change -> change.up(context -> {}))
+                        .version("one", EMPTY, change -> change.up(context -> {})));
+        assertThrows(
+                IllegalArgumentException.class, () -> SchemaHistory.builder().journal(" "));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> SchemaHistory.builder()
+                        .journal("accounts")
+                        .version("one", schema("name"), change -> change.up(context -> {}))
+                        .build());
+        var history = SchemaHistory.builder()
+                .version("one", EMPTY, change -> change.up(context -> {}))
                 .build();
-
-        try (Tava tava = openTava(entity)) {
-            MigrationResult result = tava.migrations().apply(migration).getFirst();
-            assertTrue(result.applied());
-            assertEquals(2, result.operations().stream()
-                    .filter(op -> op.description().startsWith("Insert into " + entity))
-                    .mapToLong(MigrationOperationResult::affectedRows).sum());
-
-            var records = tava.records(entity).find(Query.all()).items();
-            assertEquals(2, records.size());
-
-            MigrationResult rollback = tava.migrations().rollback(migration);
-            assertTrue(rollback.applied());
-            assertTrue(tava.records(entity).find(Query.all()).items().isEmpty());
+        try (Tava database = open()) {
+            assertThrows(IllegalArgumentException.class, () -> history.to(database, "unknown"));
+            assertTrue(database.schema().inspect().entities().isEmpty());
         }
     }
 
     @Test
-    void migrationRollbackWhenDownStepFails() {
-        String entity = uniqueEntity("faildown");
-        Migration migration = Migration.builder(entity + "_fail_down")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "Test").build()))
-                .down("Fail on rollback", ctx -> {
-                    throw new RuntimeException("Rollback failure");
+    void computesAndLoadsOptionalSourceChecksums() throws Exception {
+        String expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assertEquals(
+                expected, MigrationChecksums.sha256(new ByteArrayInputStream("abc".getBytes(StandardCharsets.UTF_8))));
+        assertEquals(
+                expected,
+                MigrationChecksums.fromManifest(
+                        new ByteArrayInputStream(("001.java=" + expected + "\n").getBytes(StandardCharsets.ISO_8859_1)),
+                        "001.java"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> MigrationChecksums.fromManifest(new ByteArrayInputStream(new byte[0]), "missing"));
+    }
+
+    private static Tava open() {
+        return Tava.open(H2.memory(UUID.randomUUID().toString()));
+    }
+
+    private static Schema schema(String name) {
+        return Schema.builder()
+                .entity("accounts", entity -> {
+                    entity.string("id").identity();
+                    entity.string(name);
                 })
                 .build();
-
-        try (Tava tava = openTava(entity)) {
-            tava.migrations().apply(migration);
-            assertEquals(1, tava.records(entity).find(Query.all()).items().size());
-
-            assertThrows(RuntimeException.class, () -> tava.migrations().rollback(migration));
-
-            assertTrue(tava.migrations().applied().contains(migration.id()));
-            assertEquals(1, tava.records(entity).find(Query.all()).items().size());
-        }
     }
 
-    @Test
-    void multipleMigrationsAppliedInSequenceWithDependencies() {
-        String entity = uniqueEntity("deps");
-        Migration m1 = Migration.builder(entity + "_m1")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("base").required().field(50);
-                }).build())
-                .up("Insert base", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("base", "base1").build()))
-                .down("Delete base", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
-                .downSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("base").required().field(50);
-                }).build())
-                .build();
-
-        Migration m2 = Migration.builder(entity + "_m2")
-                .upSchema(Schema.builder().entity(entity, e -> e.string("extra").field(100)).build())
-                .up("Update base", ctx -> ctx.update(entity, Predicate.eq("id", "1"),
-                        Mutation.builder().set("extra", "extra1").build()))
-                .down("Clear extra", ctx -> ctx.update(entity, Predicate.eq("id", "1"),
-                        Mutation.builder().set("extra", null).build()))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("extra").field(100)).build())
-                .build();
-
-        Migration m3 = Migration.builder(entity + "_m3")
-                .up("Add derived", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "2").set("base", "base2").set("extra", "extra2").build()))
-                .down("Delete derived", ctx -> ctx.delete(entity, Predicate.eq("id", "2")))
-                .build();
-
-        try (Tava tava = openTava(entity)) {
-            List<MigrationResult> results = tava.migrations().apply(m1, m2, m3);
-            assertEquals(3, results.stream().filter(MigrationResult::applied).count());
-
-            var records = tava.records(entity).find(Query.all()).items();
-            assertEquals(2, records.size());
-
-            MigrationResult r3 = tava.migrations().rollback(m3);
-            assertTrue(r3.applied());
-            assertEquals(1, tava.records(entity).find(Query.all()).items().size());
-
-            MigrationResult r2 = tava.migrations().rollback(m2);
-            assertTrue(r2.applied());
-
-            MigrationResult r1 = tava.migrations().rollback(m1);
-            assertTrue(r1.applied());
-            assertTrue(tava.records(entity).find(Query.all()).items().isEmpty());
-        }
-    }
-
-    @Test
-    void migrationWithEmptyUpStepsThrows() {
-        String entity = uniqueEntity("emptyup");
-        assertThrows(IllegalArgumentException.class, () -> Migration.builder(entity + "_empty_up")
-                .down("Delete", ctx -> ctx.delete(entity, Predicate.all()))
-                .build());
-    }
-
-    @Test
-    void migrationWithEmptyDownStepsAllowsIrreversible() {
-        String entity = uniqueEntity("emptydown");
-        Migration migration = Migration.builder(entity + "_empty_down")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "Test").build()))
-                .build();
-
-        try (Tava tava = openTava(entity)) {
-            tava.migrations().apply(migration);
-            assertFalse(migration.reversible());
-
-            assertThrows(IllegalArgumentException.class, () -> tava.migrations().rollback(migration));
-        }
-    }
-
-    @Test
-    void migrationAppliedRolledBackMultipleTimes() {
-        String entity = uniqueEntity("multi");
-        Migration migration = Migration.builder(entity + "_multi")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "Test").build()))
-                .down("Delete", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
-                .downSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .build();
-
-        try (Tava tava = openTava(entity)) {
-            tava.migrations().apply(migration);
-            assertEquals(1, tava.records(entity).find(Query.all()).items().size());
-
-            tava.migrations().rollback(migration);
-            assertTrue(tava.records(entity).find(Query.all()).items().isEmpty());
-
-            tava.migrations().apply(migration);
-            assertEquals(1, tava.records(entity).find(Query.all()).items().size());
-
-            tava.migrations().rollback(migration);
-            assertTrue(tava.records(entity).find(Query.all()).items().isEmpty());
-
-            List<String> applied = tava.migrations().applied();
-            assertTrue(applied.isEmpty() || applied.stream().noneMatch(id -> id.equals(migration.id())));
-        }
-    }
-
-    @Test
-    void pendingMigrationsDetectionWithGaps() {
-        String entity = uniqueEntity("gaps");
-        Migration m1 = Migration.builder(entity + "_m1")
-                .upSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
-                .up("Insert 1", ctx -> ctx.insert(entity, EntityRecord.builder().set("id", "1").build()))
-                .down("Delete 1", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
-                .build();
-
-        Migration m2 = Migration.builder(entity + "_m2")
-                .up("Insert 2", ctx -> ctx.insert(entity, EntityRecord.builder().set("id", "2").build()))
-                .down("Delete 2", ctx -> ctx.delete(entity, Predicate.eq("id", "2")))
-                .build();
-
-        Migration m3 = Migration.builder(entity + "_m3")
-                .up("Insert 3", ctx -> ctx.insert(entity, EntityRecord.builder().set("id", "3").build()))
-                .down("Delete 3", ctx -> ctx.delete(entity, Predicate.eq("id", "3")))
-                .build();
-
-        try (Tava tava = openTava(entity)) {
-            tava.migrations().apply(m1);
-            tava.migrations().apply(m3);
-
-            List<Migration> pending = tava.migrations().pending(List.of(m1, m2, m3));
-            assertEquals(1, pending.size());
-            assertEquals(m2.id(), pending.getFirst().id());
-        }
-    }
-
-    @Test
-    void migrationIdCollisionHandling() {
-        String entity = uniqueEntity("collision");
-        Migration m1 = Migration.builder(entity + "_same")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert first", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "1").set("name", "First").build()))
-                .down("Delete first", ctx -> ctx.delete(entity, Predicate.eq("id", "1")))
-                .downSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .build();
-
-        Migration m2 = Migration.builder(entity + "_same")
-                .upSchema(Schema.builder().entity(entity, e -> e.string("extra").field(100)).build())
-                .up("Insert second", ctx -> ctx.insert(entity, EntityRecord.builder()
-                        .set("id", "2").set("name", "Second").set("extra", "extra").build()))
-                .down("Delete second", ctx -> ctx.delete(entity, Predicate.eq("id", "2")))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("extra").field(100)).build())
-                .build();
-
-        try (Tava tava = openTava(entity)) {
-            List<MigrationResult> first = tava.migrations().apply(m1, m2);
-            assertEquals(2, first.size());
-            assertTrue(first.getFirst().applied());
-            assertFalse(first.get(1).applied());
-            assertTrue(first.get(1).operations().isEmpty());
-
-            assertEquals(1, tava.records(entity).find(Query.all()).items().size());
-
-            List<MigrationResult> second = tava.migrations().apply(m2, m1);
-            assertEquals(2, second.size());
-            assertFalse(second.getFirst().applied());
-            assertFalse(second.get(1).applied());
-        }
-    }
-
-    @Test
-    void rollbackNonAppliedMigrationReturnsNotApplied() {
-        String entity = uniqueEntity("notapplied");
-        Migration migration = Migration.builder(entity + "_not_applied")
-                .upSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
-                .down("Delete", ctx -> ctx.delete(entity, Predicate.all()))
-                .downSchema(Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build())
-                .build();
-
-        try (Tava tava = openTava(entity)) {
-            MigrationResult result = tava.migrations().rollback(migration);
-            assertFalse(result.applied());
-            assertTrue(result.operations().isEmpty());
-        }
-    }
-
-    @Test
-    void applyEmptyMigrationListReturnsEmpty() {
-        String entity = uniqueEntity("emptylist");
-        try (Tava tava = openTava(entity)) {
-            List<MigrationResult> results = tava.migrations().apply(List.of());
-            assertTrue(results.isEmpty());
-        }
-    }
-
-    @Test
-    void migrationOperationsTrackSchemaChangesAndRowCounts() {
-        String entity = uniqueEntity("ops");
-        Migration migration = Migration.builder(entity + "_ops")
-                .upSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .up("Insert multiple", ctx -> {
-                    ctx.insert(entity, EntityRecord.builder().set("id", "1").set("name", "A").build());
-                    ctx.insert(entity, EntityRecord.builder().set("id", "2").set("name", "B").build());
-                    ctx.insert(entity, EntityRecord.builder().set("id", "3").set("name", "C").build());
-                })
-                .upSchema(Schema.builder().entity(entity, e -> e.integer("value")).build())
-                .up("Update all", ctx -> ctx.forEach(entity, Query.all(), record ->
-                        ctx.update(entity, Predicate.eq("id", record.get("id")),
-                                Mutation.builder().set("value", 42).build())))
-                .down("Clear values", ctx -> ctx.forEach(entity, Query.all(), record ->
-                        ctx.update(entity, Predicate.eq("id", record.get("id")),
-                                Mutation.builder().set("value", null).build())))
-                .downSchema(Schema.builder().entity(entity, e -> e.integer("value")).build())
-                .down("Delete all", ctx -> ctx.delete(entity, Predicate.all()))
-                .downSchema(Schema.builder().entity(entity, e -> {
-                    e.string("id").identity().field(36);
-                    e.string("name").required().field(100);
-                }).build())
-                .build();
-
-        try (Tava tava = openTava(entity)) {
-            MigrationResult result = tava.migrations().apply(migration).getFirst();
-            assertTrue(result.applied());
-
-            long insertOps = result.operations().stream()
-                    .filter(op -> op.description().startsWith("Insert into " + entity))
-                    .count();
-            assertEquals(3, insertOps);
-
-            long updateOps = result.operations().stream()
-                    .filter(op -> op.description().startsWith("Update " + entity))
-                    .count();
-            assertEquals(3, updateOps);
-
-            MigrationResult rollback = tava.migrations().rollback(migration);
-            assertTrue(rollback.applied());
-
-            long deleteOps = rollback.operations().stream()
-                    .filter(op -> op.description().startsWith("Delete from " + entity))
-                    .count();
-            assertEquals(1, deleteOps);
-        }
-    }
-
-    @Test
-    void migrationWithComplexNestedSchemaChanges() {
-        String entity = uniqueEntity("nested");
-        Migration migration = Migration.builder(entity + "_nested")
-                .up("Complex schema change", ctx -> {
-                    ctx.apply("Create base", Schema.builder().entity(entity, e -> {
-                        e.string("id").identity().field(36);
-                        e.string("data").required().field(1000);
-                    }).build());
-
-                    ctx.insert(entity, EntityRecord.builder()
-                            .set("id", "1").set("data", "initial").build());
-
-                    ctx.apply("Add index field", Schema.builder().entity(entity, e -> e.integer("idx")).build());
-
-                    ctx.update(entity, Predicate.eq("id", "1"),
-                            Mutation.builder().set("idx", 1).build());
-
-                    ctx.apply("Add metadata", Schema.builder().entity(entity, e -> e.string("meta").field(50)).build());
-                })
-                .down("Reverse complex change", ctx -> ctx.delete(entity, Predicate.all()))
-                .build();
-
-        try (Tava tava = openTava(entity)) {
-            MigrationResult result = tava.migrations().apply(migration).getFirst();
-            assertTrue(result.applied());
-
-            var records = tava.records(entity).find(Query.all()).items();
-            assertEquals(1, records.size());
-            assertEquals("initial", records.getFirst().get("data"));
-            assertEquals(1, records.getFirst().get("idx"));
-            assertNull(records.getFirst().get("meta"));
-
-            MigrationResult rollback = tava.migrations().rollback(migration);
-            assertTrue(rollback.applied());
-            assertTrue(tava.records(entity).find(Query.all()).items().isEmpty());
-        }
-    }
-
-    @Test
-    void migrationAppliedIdsOrderPreserved() {
-        String entity = uniqueEntity("order");
-        Migration m1 = Migration.up(entity + "_1", Schema.builder().entity(entity, e -> e.string("id").identity().field(36)).build());
-        Migration m2 = Migration.up(entity + "_2", Schema.builder().entity(entity, e -> e.string("name").field(100)).build());
-        Migration m3 = Migration.up(entity + "_3", Schema.builder().entity(entity, e -> e.integer("value")).build());
-
-        try (Tava tava = openTava(entity)) {
-            tava.migrations().apply(m1, m2, m3);
-            List<String> applied = tava.migrations().applied();
-            assertEquals(List.of(m1.id(), m2.id(), m3.id()), applied);
-        }
+    private static void sql(MigrationContext context, String sql) {
+        context.nativeAccess().withNative(Connection.class, connection -> {
+            try (var statement = connection.createStatement()) {
+                statement.execute(sql);
+            } catch (SQLException failure) {
+                throw new IllegalStateException(failure);
+            }
+            return null;
+        });
     }
 }

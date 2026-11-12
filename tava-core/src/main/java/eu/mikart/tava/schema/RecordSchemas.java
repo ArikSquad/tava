@@ -1,15 +1,15 @@
 package eu.mikart.tava.schema;
 
 import eu.mikart.tava.schema.annotation.*;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
-import java.lang.reflect.RecordComponent;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.RecordComponent;
 import java.math.BigDecimal;
 import java.time.*;
 import java.util.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
+/** Derives entity schema definitions from Java record components and their annotations. */
 public final class RecordSchemas {
     private static final ClassValue<EntityDefinition> CACHE = new ClassValue<>() {
         @Override
@@ -18,6 +18,17 @@ public final class RecordSchemas {
         }
     };
 
+    /** Creates a record schema introspector. */
+    public RecordSchemas() {}
+
+    /**
+     * Describes a record type as an entity schema.
+     *
+     * @param type record type to inspect
+     * @return entity definition derived from the record and its schema annotations
+     * @throws IllegalArgumentException if the type is not a record or has an unsupported field type
+     * @throws NullPointerException if {@code type} is {@code null}
+     */
     public static @NotNull EntityDefinition describe(final @NotNull Class<? extends Record> type) {
         if (!type.isRecord()) throw new IllegalArgumentException(type.getName() + " is not a record");
         return CACHE.get(type);
@@ -27,12 +38,12 @@ public final class RecordSchemas {
         @SuppressWarnings("unchecked")
         final Class<? extends Record> type = (Class<? extends Record>) rawType;
         final Entity entity = type.getAnnotation(Entity.class);
-        final String name = entity != null && !entity.value().isBlank()
-            ? entity.value() : decapitalize(type.getSimpleName());
+        final String name =
+                entity != null && !entity.value().isBlank() ? entity.value() : decapitalize(type.getSimpleName());
         final List<FieldDefinition> fields = new ArrayList<>();
         for (final RecordComponent component : type.getRecordComponents()) fields.add(describe(component));
-        final Map<String, Object> entitySettings = new LinkedHashMap<>(
-            settings(type.getAnnotationsByType(AdapterSetting.class)));
+        final Map<String, Object> entitySettings =
+                new LinkedHashMap<>(settings(type.getAnnotationsByType(AdapterSetting.class)));
         for (final FieldDefinition field : fields) {
             if ("true".equals(field.settings().get("dynamodb.partitionKey"))) {
                 if (entitySettings.put("dynamodb.partitionKey", field.name()) != null)
@@ -46,18 +57,24 @@ public final class RecordSchemas {
         final Field field = component.getAnnotation(Field.class);
         final String name = field != null && !field.value().isBlank() ? field.value() : component.getName();
         final boolean identity = component.isAnnotationPresent(Identity.class);
-        final boolean nullable = !component.getType().isPrimitive()
-            && !identity && !component.isAnnotationPresent(Required.class);
+        final boolean nullable =
+                !component.getType().isPrimitive() && !identity && !component.isAnnotationPresent(Required.class);
         final Generated generated = component.getAnnotation(Generated.class);
-        return new FieldDefinition(name, typeOf(component.getType(), field), nullable, identity,
-            component.isAnnotationPresent(Unique.class),
-            generated == null ? GeneratedValue.NONE : generated.value(),
-            settings(component));
+        return new FieldDefinition(
+                name,
+                typeOf(component.getType(), field),
+                nullable,
+                identity,
+                component.isAnnotationPresent(Unique.class),
+                generated == null ? GeneratedValue.NONE : generated.value(),
+                settings(component));
     }
 
     private static @NotNull FieldType typeOf(final @NotNull Class<?> type, final @Nullable Field field) {
-        if (type == String.class) return field != null && field.length() > 0
-            ? FieldType.string(field.length()) : FieldType.of(LogicalType.TEXT);
+        if (type == String.class)
+            return field != null && field.length() > 0
+                    ? FieldType.string(field.length())
+                    : FieldType.of(LogicalType.TEXT);
         if (type.isEnum()) return FieldType.of(LogicalType.STRING);
         if (type == int.class || type == Integer.class || type == short.class || type == Short.class)
             return FieldType.of(LogicalType.INT32);
@@ -89,14 +106,15 @@ public final class RecordSchemas {
     }
 
     private static @NotNull Map<String, Object> settings(final @NotNull RecordComponent component) {
-        final Map<String, Object> settings = new LinkedHashMap<>(
-            settings(component.getAnnotationsByType(AdapterSetting.class)));
+        final Map<String, Object> settings =
+                new LinkedHashMap<>(settings(component.getAnnotationsByType(AdapterSetting.class)));
         for (final Annotation annotation : component.getAnnotations()) {
             final AdapterOverride override = annotation.annotationType().getAnnotation(AdapterOverride.class);
             if (override == null) continue;
             try {
                 // Adapter-specific annotations keep the public model clean while still carrying vendor hints.
-                final Object value = annotation.annotationType().getMethod("value").invoke(annotation);
+                final Object value =
+                        annotation.annotationType().getMethod("value").invoke(annotation);
                 settings.put(override.adapter() + "." + override.key(), value);
             } catch (ReflectiveOperationException failure) {
                 throw new IllegalArgumentException("Adapter override annotation must expose value()", failure);

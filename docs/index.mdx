@@ -11,7 +11,7 @@ SQLite, H2, SQL Server, Oracle, MongoDB, or DynamoDB.
 It is intentionally small. Tava does not try to hide every backend feature behind a
 lowest-common-denominator API. The portable layer covers schemas, records, queries,
 schema planning, migrations, and transfers. Backend-specific work stays available
-through typed native handles.
+through scoped native access.
 
 <Callout title="Design rule">
 The logical schema is authoritative. Adapter hints can change how a field is stored,
@@ -38,11 +38,19 @@ but they should not change what the field means in the application model.
 | Area | What you use |
 | --- | --- |
 | Entity model | Java records, `EntityRecord`, `Schema.builder()` |
-| Schema control | `tava.plan(schema)`, `SchemaPlan`, `ApplyOptions` |
+| Schema control | `tava.plan(schema)`, `tava.planExact(schema)`, `SchemaPlan`, `ApplyOptions` |
 | Data access | `Entity<T>`, `Records`, `Query`, `Predicate`, `Sort` |
-| Migration history | `tava.migrations()`, `Migration`, `_tava_migrations` |
-| Data movement | `DataTransfer.copy(...)`, transforms, progress callbacks |
-| Escape hatch | `nativeHandle(...)`, `nativeAccess().withNative(...)` |
+| Schema history | `SchemaHistory`, explicit up/down actions, `history.to(database, version)` |
+| Data movement | `DataTransfer.copy(...)`, resumable transfers, transforms, progress callbacks |
+| Escape hatch | `nativeAccess().withNative(...)` |
+
+## What's New in 1.3.0
+
+Version 1.3.0 adds exact schema planning for adapters that support it, durable
+schema histories with explicit forward and rollback actions, and resumable data transfers with
+file-backed checkpoints. Adapters also report a richer capability matrix, and JDBC
+adapters can use application-managed `DataSource` connections. See the pages below for
+the support limits and recovery choices behind each feature.
 
 ## A Complete Pass
 

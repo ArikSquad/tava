@@ -1,10 +1,13 @@
+import org.gradle.external.javadoc.StandardJavadocDocletOptions
+
 plugins {
     base
     id("jacoco")
+    id("com.diffplug.spotless") version "8.11.0"
 }
 
 group = "eu.mikart.tava"
-version = "1.2.2"
+version = "1.3.0"
 
 allprojects {
     group = rootProject.group
@@ -12,6 +15,9 @@ allprojects {
 
     repositories {
         mavenCentral()
+        maven("https://repo.codemc.io/repository/ArikSquad/") {
+            content { includeGroup("eu.mikart.tava") }
+        }
     }
 }
 
@@ -29,6 +35,25 @@ subprojects {
         }
         tasks.withType<Test>().configureEach {
             useJUnitPlatform()
+            inputs.property("requireIntegrationTests", providers.gradleProperty("requireIntegrationTests").isPresent)
+            if (providers.gradleProperty("requireIntegrationTests").isPresent) {
+                addTestListener(object : TestListener {
+                    override fun beforeSuite(suite: TestDescriptor) {}
+                    override fun afterSuite(suite: TestDescriptor, result: TestResult) {
+                        if (suite.className?.endsWith("ContainerTest") == true && result.testCount > 0 && result.skippedTestCount == result.testCount) {
+                            throw GradleException("Required integration suite was skipped: ${suite.className}")
+                        }
+                    }
+                    override fun beforeTest(test: TestDescriptor) {}
+                    override fun afterTest(test: TestDescriptor, result: TestResult) {}
+                })
+            }
+        }
+        tasks.withType<Javadoc>().configureEach {
+            (options as StandardJavadocDocletOptions).addBooleanOption("Werror", true)
+        }
+        project.tasks.named("check").configure {
+            dependsOn(project.tasks.named("javadoc"))
         }
         dependencies {
             add("compileOnly", rootProject.libs.jetbrains.annotations)
@@ -92,8 +117,8 @@ subprojects {
                     url = "https://github.com/ArikSquad/tava"
                     licenses {
                         license {
-                            name = "MIT License"
-                            url = "https://opensource.org/licenses/MIT"
+                            name = "Apache License, Version 2.0"
+                            url = "https://www.apache.org/licenses/LICENSE-2.0"
                         }
                     }
                     scm {
@@ -170,6 +195,152 @@ tasks.register<JacocoCoverageVerification>("jacocoCoverageVerification") {
     }
 }
 
+spotless {
+    java {
+        target("**/src/**/*.java")
+        shortenFullyQualifiedTypes()
+        importOrder()
+        removeUnusedImports()
+        palantirJavaFormat("2.103.0").formatJavadoc(true)
+    }
+}
+
+val javaSourceFiles = fileTree(rootDir) {
+    include("**/src/**/*.java")
+    exclude("**/build/**", "**/.gradle/**")
+}
+
+tasks.register("checkInlineFullyQualifiedTypes") {
+    group = "verification"
+    description = "Rejects inline fully qualified Java class references"
+    inputs.files(javaSourceFiles)
+
+    doLast {
+        // Ignore text-block examples unless their triple-quote delimiters are escaped.
+        val textBlock = "(?s:(?<!\\\\)(?:\\\\\\\\)*\"{3}.*?(?<!\\\\)(?:\\\\\\\\)*\"{3})"
+        val commentsAndLiterals = Regex(
+            "$textBlock|(?s:/\\*.*?\\*/)|//[^\\r\\n]*|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'"
+        )
+        val declarations = Regex("(?m)^[ \\t]*(?:package|import)\\b(?s:.*?);")
+        val annotations = Regex("@[A-Z_$][\\w$]*(?:\\([^)]*\\))?\\s+")
+        val qualifiedType = Regex(
+            "\\b(?:[a-z_$][\\w$]*\\s*\\.\\s*)+"
+                + "(?:@[A-Z_$][\\w$]*(?:\\([^)]*\\))?\\s+)?[A-Z_$][\\w$]*"
+        )
+        // These names collide with imported types, so Java requires qualification at the use site.
+        val identityCollision = setOf("eu.mikart.tava.data.Identity")
+        val sqlDateCollision = setOf("java.sql.Date")
+        val allowedCollisions = mapOf(
+            "tava-core/src/main/java/eu/mikart/tava/RecordMapper.java" to identityCollision,
+            "tava-sqlite/src/test/java/eu/mikart/tava/sqlite/SqliteMemoryTest.java" to identityCollision,
+            "tava-core/src/main/java/eu/mikart/tava/transfer/ResumableTransfer.java" to sqlDateCollision,
+            "tava-core/src/main/java/eu/mikart/tava/transfer/TransferRecords.java" to sqlDateCollision,
+            "tava-mongodb/src/main/java/eu/mikart/tava/mongodb/MongoAdapter.java" to sqlDateCollision,
+        )
+
+        fun blankTextPreservingLines(value: String): String =
+            value.map { character -> if (character == '\n') '\n' else ' ' }.joinToString("")
+
+        val violations = javaSourceFiles.files.sortedBy { it.path }.flatMap { file ->
+            val relativePath = rootDir.toPath().relativize(file.toPath()).toString().replace('\\', '/')
+            val source = file.readText()
+            // Keep line positions stable while removing comments, strings, text blocks, and declarations.
+            val masked = commentsAndLiterals.replace(source) { match -> blankTextPreservingLines(match.value) }
+            val code = declarations.replace(masked) { match -> blankTextPreservingLines(match.value) }
+            qualifiedType.findAll(code).mapNotNull { match ->
+                val name = match.value.replace(annotations, "").replace(Regex("\\s+"), "").trim()
+                if (name in allowedCollisions[relativePath].orEmpty()) null
+                else {
+                    val line = code.take(match.range.first).count { it == '\n' } + 1
+                    "$relativePath:$line: use an import instead of $name"
+                }
+            }.toList()
+        }
+        if (violations.isNotEmpty()) {
+            throw GradleException(
+                "Inline fully qualified class references are not allowed:\n${violations.joinToString("\n")}"
+            )
+        }
+    }
+}
+
+allprojects {
+    tasks.matching { it.name == "check" }.configureEach {
+        dependsOn(":spotlessCheck", ":checkInlineFullyQualifiedTypes")
+    }
+}
+
 tasks.named("check") {
     dependsOn("jacocoCoverageVerification")
+}
+
+val japicmp = configurations.create("japicmp") { isTransitive = false }
+
+dependencies {
+    add(japicmp.name, "com.github.siom79.japicmp:japicmp:0.26.5:jar-with-dependencies")
+}
+
+val apiCompatibility = tasks.register("apiCompatibility") {
+    group = "verification"
+    description = "Checks public binary compatibility against the last published release"
+}
+
+subprojects {
+    plugins.withId("java-library") {
+        val baseline = rootProject.configurations.create("apiBaseline${project.name}") { isTransitive = false }
+        rootProject.dependencies.add(baseline.name, "eu.mikart.tava:${project.name}:${providers.gradleProperty("apiBaselineVersion").getOrElse("1.2.2")}")
+        val jar = tasks.named<Jar>("jar")
+        val compatibility = tasks.register<JavaExec>("apiCompatibility") {
+            group = "verification"
+            description = "Checks public binary compatibility against the published baseline"
+            dependsOn(jar)
+            classpath = rootProject.configurations.getByName("japicmp")
+            mainClass.set("japicmp.JApiCmp")
+            doFirst {
+                args("--old", baseline.singleFile.absolutePath,
+                    "--new", jar.get().archiveFile.get().asFile.absolutePath,
+                    "--old-classpath", configurations.getByName("compileClasspath").asPath,
+                    "--new-classpath", configurations.getByName("compileClasspath").asPath,
+                    "--only-modified", "--error-on-binary-incompatibility", "--error-on-source-incompatibility")
+            }
+        }
+        apiCompatibility.configure { dependsOn(compatibility) }
+    }
+}
+
+val migrationSources = providers.gradleProperty("migrationSources").orElse("src/main/migrations")
+val migrationFiles = fileTree(migrationSources) { include("**/*") }
+val migrationManifest = layout.buildDirectory.file("generated/migration-checksums.properties")
+
+tasks.register("generateMigrationChecksums") {
+    group = "build"
+    description = "Generates deterministic SHA-256 checksums for immutable migration sources (-PmigrationSources=directory)"
+    inputs.files(migrationFiles).withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.file(migrationManifest)
+    doLast {
+        val sourceRoot = file(migrationSources).toPath()
+        fun escapeKey(key: String): String = key.map { char ->
+            when {
+                char in "\\ :=#!" -> "\\$char"
+                char.code < 0x20 || char.code > 0x7e -> "\\u%04x".format(char.code)
+                else -> char.toString()
+            }
+        }.joinToString("")
+        val entries = migrationFiles.files.associate { source ->
+            val key = sourceRoot.relativize(source.toPath()).toString().replace('\\', '/')
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            source.inputStream().use { input ->
+                val buffer = ByteArray(8192)
+                var count = input.read(buffer)
+                while (count != -1) {
+                    digest.update(buffer, 0, count)
+                    count = input.read(buffer)
+                }
+            }
+            key to java.util.HexFormat.of().formatHex(digest.digest())
+        }
+        val output = migrationManifest.get().asFile
+        output.parentFile.mkdirs()
+        output.writeText(entries.toSortedMap().entries.joinToString("", transform = { (key, digest) -> "${escapeKey(key)}=$digest\n" }))
+    }
 }

@@ -16,7 +16,7 @@ import eu.mikart.tava.capability.Feature;
 var capabilities = tava.capabilities();
 
 if (capabilities.supports(Feature.JSON)) {
-    // Portable JSON work is available or emulated.
+    // JSON is supported directly or emulated by this adapter.
 }
 
 capabilities.matrix().forEach((feature, capability) ->
@@ -38,24 +38,32 @@ Support levels:
 Features include schema enforcement, unique constraints, secondary indexes,
 transactions, conditional writes, sorting, pagination, projection, joins, aggregation,
 TTL, full-text search, generated values, JSON, binary data, bulk reads, and bulk
-writes.
+writes. Use `capabilities.feature(feature)` to inspect the declared detail and limits
+as well as the support level. `supports(...)` is true only for `SUPPORTED` and
+`EMULATED`; `NATIVE_ONLY` means the portable API does not provide it.
 
 ## Native Handles
 
-Use `nativeHandle(...)` when you need the underlying client object.
+Use `nativeAccess().withNative(...)` when you need the underlying client object. The
+callback scopes use of the handle to the adapter-controlled operation:
 
 ```java title="MongoNativeHandle.java"
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Indexes;
 
-MongoDatabase database = tava.nativeHandle(MongoDatabase.class);
-
-database.getCollection("accounts")
-        .createIndex(Indexes.text("bio"));
+tava.nativeAccess().withNative(MongoDatabase.class, database -> {
+    database.getCollection("accounts")
+            .createIndex(Indexes.text("bio"));
+    return null;
+});
 ```
 
+The direct `nativeHandle(...)` method is deprecated in 1.3.0; prefer the callback API
+shown here so adapters can manage handle and connection lifetimes safely.
+
 For JDBC adapters, use callback-style native access so the connection lifecycle stays
-under adapter control.
+under adapter control. The connection is scoped to the callback; do not retain it after
+the callback returns.
 
 ```java title="JdbcNativeAccess.java"
 import java.sql.Connection;

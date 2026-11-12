@@ -48,17 +48,15 @@ Default options:
 import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.transfer.TransferOptions;
 
-TransferOptions options = new TransferOptions(
-        1_000,
-        false,
-        true,
-        record -> EntityRecord.builder()
+TransferOptions options = TransferOptions.builder()
+        .batchSize(1_000)
+        .transform(record -> EntityRecord.builder()
                 .set("id", record.get("id"))
                 .set("email", normalizeEmail(record.get("email", String.class)))
                 .set("createdAt", record.get("createdAt"))
-                .build(),
-        (entity, count) -> logger.info("{}: {}", entity, count)
-);
+                .build())
+        .progress((entity, count) -> logger.info("{}: {}", entity, count))
+        .build();
 ```
 
 ## Transform Records
@@ -66,17 +64,13 @@ TransferOptions options = new TransferOptions(
 The transform runs before a record is inserted into the target.
 
 ```java title="RedactTransfer.java"
-TransferOptions options = new TransferOptions(
-        500,
-        false,
-        true,
-        record -> EntityRecord.builder()
+TransferOptions options = TransferOptions.builder()
+        .transform(record -> EntityRecord.builder()
                 .set("id", record.get("id"))
                 .set("email", record.get("email"))
                 .set("metadata", Map.of("redacted", true))
-                .build(),
-        TransferOptions.ProgressListener.NONE
-);
+                .build())
+        .build();
 ```
 
 This is useful for:
@@ -99,11 +93,80 @@ report.issues().forEach(issue ->
 ```
 
 If an insert fails, copying stops and the report is returned with `complete() == false`.
-Counts include the records successfully inserted before the failure.
+Counts include the records successfully inserted before the failure. When the target
+supports portable transactions and bulk writes, ordinary copies use transactional batches;
+a failed batch is rolled back before retrying its already transformed records individually.
 The transfer also stops with an error issue if a source adapter repeats any cursor, which
 prevents a broken paging implementation from causing an infinite loop or duplicate copy.
+Diagnostics are deduplicated and capped at 1,000 entries, including a truncation notice.
+Cursor tracking stores fixed-size digests and stops safely after 100,000 cursors per entity.
+Raise this limit explicitly for larger copies or resume a checkpointed copy.
+
+Read `issues()` even when a transfer completes: it can include `LOSSY` issues when
+source fields were omitted from target records. These are reported only when
+`allowLossy` is enabled.
+
+## Resume After an Interruption
+
+For a long copy that may be interrupted, use `ResumableTransfer` with a checkpoint store:
+
+```java title="ResumableCopy.java"
+import eu.mikart.tava.transfer.FileTransferCheckpointStore;
+import eu.mikart.tava.transfer.ResumableTransfer;
+
+var checkpoints = new FileTransferCheckpointStore(Path.of("var/tava-checkpoints"));
+TransferReport report = ResumableTransfer.copy(
+        source,
+        target,
+        schema,
+        TransferOptions.defaults(),
+        "archive-copy-2026-03",
+        checkpoints);
+
+if (!report.complete()) {
+    report.issues().forEach(System.err::println);
+}
+```
+
+The file store writes checkpoints atomically and takes an exclusive lock for each
+transfer ID. Keep the same transfer ID, source and target, schema, batch size, and
+deterministic transform when resuming. The ID is your label for the endpoint and
+transform configuration; choose a new ID when that configuration changes. Tava checks
+the adapter names, schema fingerprint, and batch size in the saved checkpoint.
+
+The source must stay stable for the duration of the copy, or provide its own snapshot.
+Resumable copies need non-null identity fields in each transferred record. Tava uses
+those identities to check records on the target and report a conflict if an existing
+record has different values. If a page was written but its checkpoint was not saved
+before a crash, Tava safely checks matching target records by identity when it retries
+that page; a record with different values is reported as a conflict rather than
+overwritten.
+
+`FileTransferCheckpointStore` needs a filesystem that supports exclusive locks and
+atomic file replacement. For a distributed job or a filesystem without those features,
+implement `TransferCheckpointStore` using storage with equivalent exclusive leases and
+atomic checkpoint saves.
 
 <Callout type="warn" title="Transfers are application work">
 Tava handles paging and target inserts, but it does not replace backup, restore, CDC,
 or online migration tooling. Use it when you want a schema-aware application-level copy.
 </Callout>
+
+## Cancellation, Deadlines, and Memory Limits
+
+Both copy APIs accept a final `TransferControl` argument:
+
+```java
+var control = TransferControl.builder()
+        .timeout(Duration.ofMinutes(30))
+        .cancelled(cancelled::get)
+        .build();
+TransferReport report = DataTransfer.copy(source, target, schema, options, control);
+```
+
+Cancellation, thread interruption, and elapsed deadlines are checked between driver calls.
+They return an incomplete report; they do not interrupt an in-flight database operation.
+Configure driver timeouts separately. Timeout duration starts anew for each copy invocation.
+Resumable copies retain diagnostics from completed pages in their checkpoints, including
+when a completed transfer is opened again. Version 1 checkpoints remain readable.
+File checkpoints sync their parent directory after replacement on POSIX filesystems.

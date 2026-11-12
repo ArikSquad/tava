@@ -1,23 +1,45 @@
 package eu.mikart.tava;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
+import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 class ValueCodecsTest {
-    enum State { NEW, ACTIVE }
-    enum Priority { LOW, MEDIUM, HIGH }
+    enum State {
+        NEW,
+        ACTIVE
+    }
+
+    enum Priority {
+        LOW,
+        MEDIUM,
+        HIGH
+    }
 
     private static final ValueCodec<String> STRING_CODEC = new ValueCodec<>() {
-        public Object encode(String value) { return value; }
-        public String decode(Object stored) { return stored == null ? null : stored.toString(); }
+        public Object encode(String value) {
+            return value;
+        }
+
+        public String decode(Object stored) {
+            return stored == null ? null : stored.toString();
+        }
     };
+
+    @Test
+    void rejectsAmbiguousOrExcessivelyNestedJson() {
+        assertThrows(TavaException.Mapping.class, () -> ValueCodecs.fromJson("{\"x\":null,\"x\":1}"));
+        assertThrows(TavaException.Mapping.class, () -> ValueCodecs.fromJson("[\u000b1]"));
+        assertThrows(TavaException.Mapping.class, () -> ValueCodecs.fromJson("\u0661"));
+        assertThrows(TavaException.Mapping.class, () -> ValueCodecs.fromJson("[".repeat(129) + "0" + "]".repeat(129)));
+        assertNotNull(ValueCodecs.fromJson("[".repeat(127) + "0" + "]".repeat(127)));
+    }
 
     @Test
     void composesEnumAndCollectionCodecsAcrossJsonStorage() {
@@ -37,15 +59,24 @@ class ValueCodecsTest {
 
         Object decoded = ValueCodecs.fromJson(ValueCodecs.toJson(value));
         assertEquals(value.get("text"), ((Map<?, ?>) decoded).get("text"));
-        assertEquals(List.of(true, 12L, new java.math.BigDecimal("-3.5"), "x"),
-                ((Map<?, ?>) decoded).get("values"));
+        assertEquals(List.of(true, 12L, new BigDecimal("-3.5"), "x"), ((Map<?, ?>) decoded).get("values"));
         assertNull(((Map<?, ?>) decoded).get("nothing"));
     }
 
     @Test
     void rejectsMalformedJsonAndValuesJsonCannotRepresent() {
-        for (String malformed : List.of("", "01", "-01", "1.", "1e", "[1,]", "{\"x\":}",
-                "\"unterminated", "\"raw\nline\"", "true false", "\"bad\\x\"")) {
+        for (String malformed : List.of(
+                "",
+                "01",
+                "-01",
+                "1.",
+                "1e",
+                "[1,]",
+                "{\"x\":}",
+                "\"unterminated",
+                "\"raw\nline\"",
+                "true false",
+                "\"bad\\x\"")) {
             assertThrows(TavaException.Mapping.class, () -> ValueCodecs.fromJson(malformed), malformed);
         }
         assertThrows(TavaException.Mapping.class, () -> ValueCodecs.toJson(Double.NaN));
@@ -216,7 +247,7 @@ class ValueCodecsTest {
         assertEquals(123L, decoded);
 
         decoded = ValueCodecs.fromJson("123.456");
-        assertEquals(new java.math.BigDecimal("123.456"), decoded);
+        assertEquals(new BigDecimal("123.456"), decoded);
 
         decoded = ValueCodecs.fromJson("-42");
         assertEquals(-42L, decoded);
@@ -228,7 +259,7 @@ class ValueCodecsTest {
         assertEquals(10000000000L, decoded);
 
         decoded = ValueCodecs.fromJson("1.5e-3");
-        assertEquals(new java.math.BigDecimal("1.5E-3"), decoded);
+        assertEquals(new BigDecimal("1.5E-3"), decoded);
     }
 
     @Test

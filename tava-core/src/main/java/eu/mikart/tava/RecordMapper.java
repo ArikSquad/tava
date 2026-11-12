@@ -1,28 +1,27 @@
 package eu.mikart.tava;
 
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.query.Mutation;
+import eu.mikart.tava.query.Predicate;
+import eu.mikart.tava.query.Query;
 import eu.mikart.tava.schema.GeneratedValue;
 import eu.mikart.tava.schema.RecordSchemas;
 import eu.mikart.tava.schema.annotation.Field;
 import eu.mikart.tava.schema.annotation.Generated;
 import eu.mikart.tava.schema.annotation.Identity;
 import eu.mikart.tava.schema.annotation.MappedWith;
-import eu.mikart.tava.query.Mutation;
-import eu.mikart.tava.query.Predicate;
-import eu.mikart.tava.query.Query;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -33,6 +32,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 final class RecordMapper<T extends Record> {
     private static final ClassValue<RecordMapper<?>> CACHE = new ClassValue<>() {
@@ -64,11 +65,13 @@ final class RecordMapper<T extends Record> {
         this.metadata = metadata(type);
     }
 
-    @NotNull String entityName() {
+    @NotNull
+    String entityName() {
         return entityName;
     }
 
-    @NotNull EntityRecord write(final @NotNull T value) {
+    @NotNull
+    EntityRecord write(final @NotNull T value) {
         final Map<String, Object> values = new LinkedHashMap<>();
         try {
             for (final Component component : metadata.components) {
@@ -87,7 +90,8 @@ final class RecordMapper<T extends Record> {
 
     eu.mikart.tava.data.@NotNull Identity identity(final @NotNull Object value) {
         if (metadata.identities.size() != 1) {
-            throw new TavaException.Schema("Entity requires exactly one identity for scalar ID operations; use Identity.of(...) for composite keys");
+            throw new TavaException.Schema(
+                    "Entity requires exactly one identity for scalar ID operations; use Identity.of(...) for composite keys");
         }
         return eu.mikart.tava.data.Identity.of(metadata.identities.getFirst().name, value);
     }
@@ -105,13 +109,15 @@ final class RecordMapper<T extends Record> {
         return eu.mikart.tava.data.Identity.of(values);
     }
 
-    @NotNull Mutation update(final @NotNull T record) {
+    @NotNull
+    Mutation update(final @NotNull T record) {
         final Map<String, Object> values = new LinkedHashMap<>(write(record).values());
         for (final Component component : metadata.identities) values.remove(component.name);
         return new Mutation(values);
     }
 
-    @NotNull Mutation write(final @NotNull Mutation mutation) {
+    @NotNull
+    Mutation write(final @NotNull Mutation mutation) {
         final Map<String, Object> values = new LinkedHashMap<>();
         mutation.values().forEach((name, value) -> {
             final Component component = metadata.byName.get(name);
@@ -120,20 +126,26 @@ final class RecordMapper<T extends Record> {
         final Map<String, Mutation.Operation> operations = new LinkedHashMap<>();
         mutation.operations().forEach((name, operation) -> {
             final Component component = metadata.byName.get(name);
-            operations.put(name, new Mutation.Operation(operation.kind(),
-                    component == null ? operation.value() : encodeElement(component, operation.value())));
+            operations.put(
+                    name,
+                    new Mutation.Operation(
+                            operation.kind(),
+                            component == null ? operation.value() : encodeElement(component, operation.value())));
         });
         return new Mutation(values, operations);
     }
 
-    @NotNull Query write(final @NotNull Query query) {
+    @NotNull
+    Query write(final @NotNull Query query) {
         return new Query(write(query.predicate()), query.projection(), query.sorting(), query.limit(), query.cursor());
     }
 
-    @NotNull Predicate write(final @NotNull Predicate predicate) {
+    @NotNull
+    Predicate write(final @NotNull Predicate predicate) {
         if (predicate instanceof Predicate.All) return predicate;
         if (predicate instanceof Predicate.Junction junction) {
-            final List<Predicate> predicates = new ArrayList<>(junction.predicates().size());
+            final List<Predicate> predicates =
+                    new ArrayList<>(junction.predicates().size());
             for (final Predicate child : junction.predicates()) predicates.add(write(child));
             return new Predicate.Junction(junction.and(), predicates);
         }
@@ -154,7 +166,8 @@ final class RecordMapper<T extends Record> {
         return new Predicate.Comparison(comparison.field(), comparison.operator(), encoded);
     }
 
-    @NotNull T read(final @NotNull EntityRecord value) {
+    @NotNull
+    T read(final @NotNull EntityRecord value) {
         final Object[] args = new Object[metadata.components.length];
         for (int i = 0; i < metadata.components.length; i++) {
             final Component component = metadata.components[i];
@@ -174,7 +187,8 @@ final class RecordMapper<T extends Record> {
         final ValueCodec<Object> codec = component.codec();
         if (codec != null) return codec.encode(value);
         if (value instanceof Enum<?> e) return e.name();
-        if (value instanceof Collection<?> collection) return collection.stream().map(this::encodeValue).toList();
+        if (value instanceof Collection<?> collection)
+            return collection.stream().map(this::encodeValue).toList();
         if (value instanceof Map<?, ?> map) {
             final Map<String, Object> result = new LinkedHashMap<>();
             map.forEach((key, item) -> result.put(String.valueOf(key), encodeValue(item)));
@@ -197,7 +211,8 @@ final class RecordMapper<T extends Record> {
 
     private Object encodeValue(final Object value) {
         if (value instanceof Enum<?> e) return e.name();
-        if (value instanceof Collection<?> collection) return collection.stream().map(this::encodeValue).toList();
+        if (value instanceof Collection<?> collection)
+            return collection.stream().map(this::encodeValue).toList();
         if (value instanceof Map<?, ?> map) {
             final Map<String, Object> result = new LinkedHashMap<>();
             map.forEach((key, item) -> result.put(String.valueOf(key), encodeValue(item)));
@@ -209,8 +224,7 @@ final class RecordMapper<T extends Record> {
     private Object encodeElement(final Component component, final Object value) {
         if (value == null) return null;
         final Type generic = component.reflection.getGenericType();
-        if (generic instanceof ParameterizedType parameterized
-                && parameterized.getActualTypeArguments().length > 0) {
+        if (generic instanceof ParameterizedType parameterized && parameterized.getActualTypeArguments().length > 0) {
             return encodeValue(value);
         }
         return encode(component, value);
@@ -221,15 +235,20 @@ final class RecordMapper<T extends Record> {
         final ValueCodec<Object> codec = component.codec();
         if (codec != null) return codec.decode(raw);
         final Class<?> target = component.type;
-        if (raw instanceof String text && (Collection.class.isAssignableFrom(target)
-                || Map.class.isAssignableFrom(target) || target.isRecord())) {
+        if (raw instanceof String text
+                && (Collection.class.isAssignableFrom(target)
+                        || Map.class.isAssignableFrom(target)
+                        || target.isRecord())) {
             raw = ValueCodecs.fromJson(text);
         }
         if (raw != null && target.isEnum()) return Enum.valueOf(target.asSubclass(Enum.class), raw.toString());
         if (raw instanceof Collection<?> collection && Collection.class.isAssignableFrom(target)) {
             final Type elementType = component.reflection.getGenericType() instanceof ParameterizedType parameterized
-                    ? parameterized.getActualTypeArguments()[0] : Object.class;
-            final List<Object> values = collection.stream().map(value -> decodeValue(value, elementType)).toList();
+                    ? parameterized.getActualTypeArguments()[0]
+                    : Object.class;
+            final List<Object> values = collection.stream()
+                    .map(value -> decodeValue(value, elementType))
+                    .toList();
             if (Set.class.isAssignableFrom(target)) return new LinkedHashSet<>(values);
             return new ArrayList<>(values);
         }
@@ -262,7 +281,8 @@ final class RecordMapper<T extends Record> {
         try {
             return (ValueCodec<Object>) mapped.value().getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException failure) {
-            throw new TavaException.Mapping("Cannot create codec " + mapped.value().getName(), failure);
+            throw new TavaException.Mapping(
+                    "Cannot create codec " + mapped.value().getName(), failure);
         }
     }
 
@@ -281,18 +301,39 @@ final class RecordMapper<T extends Record> {
             case Object o when target.isInstance(o) -> o;
             case Object o when target == String.class -> o.toString();
             case Object o when target == UUID.class -> UUID.fromString(o.toString());
+            case OffsetDateTime date when target == Instant.class -> date.toInstant();
+            case Instant instant when target == OffsetDateTime.class -> instant.atOffset(ZoneOffset.UTC);
+            case Timestamp timestamp
+            when target == OffsetDateTime.class -> timestamp.toInstant().atOffset(ZoneOffset.UTC);
             case Timestamp timestamp when target == Instant.class -> timestamp.toInstant();
+            case Timestamp timestamp when target == LocalDateTime.class -> timestamp.toLocalDateTime();
+            // SQLite CURRENT_TIMESTAMP returns UTC text with a space separator and no offset.
+            case String text
+            when target == Instant.class && text.length() >= 19 && text.charAt(10) == ' ' ->
+                LocalDateTime.parse(text.replace(' ', 'T')).toInstant(ZoneOffset.UTC);
             case Object o when target == Instant.class -> Instant.parse(o.toString());
             case Object o when target == OffsetDateTime.class -> OffsetDateTime.parse(o.toString());
             case Object o when target == LocalDate.class -> LocalDate.parse(o.toString());
             case Object o when target == LocalDateTime.class -> LocalDateTime.parse(o.toString());
-            case Number n when target == int.class || target == Integer.class -> n.intValue();
-            case Number n when target == long.class || target == Long.class -> n.longValue();
+            case Number n when target == short.class || target == Short.class -> exactNumber(n, target);
+            case Number n when target == int.class || target == Integer.class -> exactNumber(n, target);
+            case Number n when target == long.class || target == Long.class -> exactNumber(n, target);
             case Number n when target == double.class || target == Double.class -> n.doubleValue();
             case Number n when target == boolean.class || target == Boolean.class -> n.intValue() != 0;
             case Number n when target == byte.class || target == Byte.class -> n.byteValue();
             default -> raw;
         };
+    }
+
+    private static Number exactNumber(Number value, Class<?> target) {
+        try {
+            BigDecimal decimal = new BigDecimal(value.toString());
+            if (target == short.class || target == Short.class) return decimal.shortValueExact();
+            if (target == int.class || target == Integer.class) return decimal.intValueExact();
+            return decimal.longValueExact();
+        } catch (ArithmeticException | NumberFormatException failure) {
+            throw new TavaException.Mapping("Cannot convert number to " + target.getSimpleName(), failure);
+        }
     }
 
     private static final class RecordMetadata {
@@ -305,8 +346,7 @@ final class RecordMapper<T extends Record> {
                 final Component[] components,
                 final List<Component> identities,
                 final Map<String, Component> byName,
-                final Constructor<?> constructor
-        ) {
+                final Constructor<?> constructor) {
             this.components = components;
             this.identities = List.copyOf(identities);
             this.byName = Map.copyOf(byName);
