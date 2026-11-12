@@ -89,7 +89,7 @@ public final class ValueCodecs {
      */
     public static @NotNull String toJson(final Object value) {
         StringBuilder output = new StringBuilder();
-        writeJson(output, value);
+        writeJson(output, value, 1);
         return output.toString();
     }
 
@@ -107,7 +107,8 @@ public final class ValueCodecs {
         return new JsonParser(json).parse();
     }
 
-    private static void writeJson(StringBuilder out, Object value) {
+    private static void writeJson(StringBuilder out, Object value, int depth) {
+        if (depth > 128) throw new TavaException.Mapping("JSON nesting exceeds 128 values", null);
         if (value == null) {
             out.append("null");
             return;
@@ -134,12 +135,15 @@ public final class ValueCodecs {
         if (value instanceof Map<?, ?> map) {
             out.append('{');
             boolean first = true;
+            Set<String> keys = new HashSet<>();
             for (var entry : map.entrySet()) {
+                String key = String.valueOf(entry.getKey());
+                if (!keys.add(key)) throw new TavaException.Mapping("Duplicate JSON object key: " + key, null);
                 if (!first) out.append(',');
                 first = false;
-                quote(out, String.valueOf(entry.getKey()));
+                quote(out, key);
                 out.append(':');
-                writeJson(out, entry.getValue());
+                writeJson(out, entry.getValue(), depth + 1);
             }
             out.append('}');
             return;
@@ -150,7 +154,7 @@ public final class ValueCodecs {
             for (Object element : collection) {
                 if (!first) out.append(',');
                 first = false;
-                writeJson(out, element);
+                writeJson(out, element, depth + 1);
             }
             out.append(']');
             return;
@@ -172,7 +176,7 @@ public final class ValueCodecs {
                 case '\r' -> out.append("\\r");
                 case '\t' -> out.append("\\t");
                 default -> {
-                    if (c < 0x20) {
+                    if (c < 0x20 || Character.isSurrogate(c)) {
                         out.append("\\u");
                         out.append(HEX[(c >>> 12) & 0xF]);
                         out.append(HEX[(c >>> 8) & 0xF]);
@@ -275,13 +279,18 @@ public final class ValueCodecs {
                             case 't' -> '\t';
                             case 'u' -> {
                                 if (offset + 4 > text.length()) yield (char) fail();
-                                try {
-                                    char decoded = (char) Integer.parseInt(text.substring(offset, offset + 4), 16);
-                                    offset += 4;
-                                    yield decoded;
-                                } catch (NumberFormatException e) {
-                                    yield (char) fail();
+                                int decoded = 0;
+                                for (int i = 0; i < 4; i++) {
+                                    char digit = text.charAt(offset++);
+                                    int hex = digit >= '0' && digit <= '9'
+                                            ? digit - '0'
+                                            : digit >= 'a' && digit <= 'f'
+                                                    ? digit - 'a' + 10
+                                                    : digit >= 'A' && digit <= 'F' ? digit - 'A' + 10 : -1;
+                                    if (hex < 0) fail();
+                                    decoded = (decoded << 4) | hex;
                                 }
+                                yield (char) decoded;
                             }
                             default -> (char) fail();
                         });
@@ -314,7 +323,14 @@ public final class ValueCodecs {
             if (start == offset) return fail();
             try {
                 BigDecimal value = new BigDecimal(text.substring(start, offset));
-                return value.scale() <= 0 && value.precision() < 19 ? value.longValueExact() : value;
+                if (value.scale() <= 0 && value.precision() < 19) {
+                    try {
+                        return value.longValueExact();
+                    } catch (ArithmeticException outsideLongRange) {
+                        return value;
+                    }
+                }
+                return value;
             } catch (ArithmeticException | NumberFormatException e) {
                 return fail();
             }

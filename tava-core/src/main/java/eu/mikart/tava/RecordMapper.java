@@ -15,6 +15,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -300,6 +301,10 @@ final class RecordMapper<T extends Record> {
             case Object o when target.isInstance(o) -> o;
             case Object o when target == String.class -> o.toString();
             case Object o when target == UUID.class -> UUID.fromString(o.toString());
+            case OffsetDateTime date when target == Instant.class -> date.toInstant();
+            case Instant instant when target == OffsetDateTime.class -> instant.atOffset(ZoneOffset.UTC);
+            case Timestamp timestamp
+            when target == OffsetDateTime.class -> timestamp.toInstant().atOffset(ZoneOffset.UTC);
             case Timestamp timestamp when target == Instant.class -> timestamp.toInstant();
             case Timestamp timestamp when target == LocalDateTime.class -> timestamp.toLocalDateTime();
             // SQLite CURRENT_TIMESTAMP returns UTC text with a space separator and no offset.
@@ -310,13 +315,25 @@ final class RecordMapper<T extends Record> {
             case Object o when target == OffsetDateTime.class -> OffsetDateTime.parse(o.toString());
             case Object o when target == LocalDate.class -> LocalDate.parse(o.toString());
             case Object o when target == LocalDateTime.class -> LocalDateTime.parse(o.toString());
-            case Number n when target == int.class || target == Integer.class -> n.intValue();
-            case Number n when target == long.class || target == Long.class -> n.longValue();
+            case Number n when target == short.class || target == Short.class -> exactNumber(n, target);
+            case Number n when target == int.class || target == Integer.class -> exactNumber(n, target);
+            case Number n when target == long.class || target == Long.class -> exactNumber(n, target);
             case Number n when target == double.class || target == Double.class -> n.doubleValue();
             case Number n when target == boolean.class || target == Boolean.class -> n.intValue() != 0;
             case Number n when target == byte.class || target == Byte.class -> n.byteValue();
             default -> raw;
         };
+    }
+
+    private static Number exactNumber(Number value, Class<?> target) {
+        try {
+            BigDecimal decimal = new BigDecimal(value.toString());
+            if (target == short.class || target == Short.class) return decimal.shortValueExact();
+            if (target == int.class || target == Integer.class) return decimal.intValueExact();
+            return decimal.longValueExact();
+        } catch (ArithmeticException | NumberFormatException failure) {
+            throw new TavaException.Mapping("Cannot convert number to " + target.getSimpleName(), failure);
+        }
     }
 
     private static final class RecordMetadata {
