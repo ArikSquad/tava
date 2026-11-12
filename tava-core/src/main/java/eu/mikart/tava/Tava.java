@@ -4,13 +4,13 @@ import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
-import eu.mikart.tava.migration.Migrations;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.QueryDiagnostics;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.SchemaRenames;
+import eu.mikart.tava.schema.plan.ApplyOptions;
 import eu.mikart.tava.schema.plan.SchemaPlan;
 import eu.mikart.tava.spi.Adapter;
 import eu.mikart.tava.spi.EntityStore;
@@ -274,15 +274,6 @@ public final class Tava implements AutoCloseable {
     }
 
     /**
-     * Returns a migration manager using the default journal entity.
-     *
-     * @return migration manager
-     */
-    public Migrations migrations() {
-        return new Migrations(this);
-    }
-
-    /**
      * Returns a typed record facade for the entity inferred from the record annotations. Use {@link #records(String)}
      * when you need partial projections or dynamic field sets.
      *
@@ -425,7 +416,7 @@ public final class Tava implements AutoCloseable {
         return new SchemaPlan(
                 plan.changes(),
                 () -> withLifecycle(() -> {
-                    plan.application().run();
+                    plan.apply(new ApplyOptions(true, true));
                     return null;
                 }));
     }

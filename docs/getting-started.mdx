@@ -59,7 +59,19 @@ dependencies {
 `Tava` owns the adapter passed to `open(...)`. Close it when the work is done, as in
 the examples here. If your application needs async entity methods, provide an
 executor explicitly with `Tava.open(adapter, databaseExecutor)`; the default uses
-the common fork-join pool. Async calls are unavailable inside transactions.
+virtual threads for blocking I/O. Async calls are unavailable inside transactions.
+
+Operation settings also have named builders:
+
+```java
+TavaOptions options = TavaOptions.builder()
+        .timeout(Duration.ofSeconds(10))
+        .maxAsyncOperations(100)
+        .defaultPageSize(100)
+        .build();
+
+Tava tava = Tava.open(adapter, options);
+```
 
 ## Pick An Adapter
 
@@ -126,9 +138,7 @@ or destructive changes require an explicit opt-in.
 ```java title="ApplySchema.java"
 import eu.mikart.tava.schema.Schema;
 
-Schema schema = Schema.builder()
-        .record(Account.class)
-        .build();
+Schema schema = Schema.of(Account.class);
 
 try (Tava tava = Tava.open(Postgres.connect(jdbcUrl, user, password))) {
     var plan = tava.plan(schema);
@@ -169,8 +179,8 @@ var page = accounts.find(Query.builder()
   <Card href="entities-and-queries" title="Entity API">
     Work with typed records, raw `EntityRecord` values, predicates, sorting, and cursors.
   </Card>
-  <Card href="schema-plans-and-migrations" title="Migrations">
-    Keep production schema changes deliberate and reviewable.
+  <Card href="schema-plans-and-migrations" title="Schema history">
+    Define up and down transitions once, then run pending versions in order.
   </Card>
   <Card href="data-transfer" title="Data transfer">
     Copy data across adapters, including transfers that can resume after a restart.

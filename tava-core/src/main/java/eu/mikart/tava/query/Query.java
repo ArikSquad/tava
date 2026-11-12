@@ -75,6 +75,16 @@ public record Query(
         return builder().build();
     }
 
+    /**
+     * Copies this query with a continuation token, retaining every bound query option.
+     *
+     * @param token next cursor, or null to restart
+     * @return continued query
+     */
+    public Query withCursor(@Nullable String token) {
+        return new Query(predicate, projection, sorting, limit, token);
+    }
+
     /** Configures a query request. */
     public static final class Builder {
         private Predicate predicate = Predicate.all();
@@ -105,6 +115,21 @@ public record Query(
          */
         public @NotNull Builder project(final @NotNull String... fields) {
             this.projection = List.of(fields);
+            return this;
+        }
+
+        /**
+         * Selects typed fields. At least one reference avoids ambiguity with project().
+         *
+         * @param first first projected field
+         * @param rest remaining projected fields
+         * @return this builder
+         */
+        public Builder project(FieldRef<?> first, FieldRef<?>... rest) {
+            var fields = new ArrayList<String>();
+            fields.add(first.name());
+            for (var field : rest) fields.add(field.name());
+            projection = List.copyOf(fields);
             return this;
         }
 

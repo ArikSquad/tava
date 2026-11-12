@@ -13,6 +13,7 @@ import eu.mikart.tava.query.QueryDiagnostics;
 import eu.mikart.tava.query.Sort;
 import eu.mikart.tava.schema.*;
 import eu.mikart.tava.schema.plan.*;
+import eu.mikart.tava.schema.plan.ApplyOptions;
 import eu.mikart.tava.spi.*;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -687,7 +688,7 @@ final class DynamoDbAdapter implements Adapter {
             return new SchemaPlan(changes, () -> {
                 if (!actual.equals(inspect()))
                     throw new TavaException.Schema("Schema changed after planning; create a new plan");
-                additive.application().run();
+                additive.apply(new ApplyOptions(true, true));
             });
         }
     }

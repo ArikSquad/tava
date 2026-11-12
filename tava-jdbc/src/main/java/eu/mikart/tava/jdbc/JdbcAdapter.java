@@ -20,6 +20,7 @@ import eu.mikart.tava.schema.IndexDefinition;
 import eu.mikart.tava.schema.LogicalType;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.SchemaRenames;
+import eu.mikart.tava.schema.plan.ApplyOptions;
 import eu.mikart.tava.schema.plan.ChangeRisk;
 import eu.mikart.tava.schema.plan.SchemaChange;
 import eu.mikart.tava.schema.plan.SchemaPlan;
@@ -861,7 +862,7 @@ public final class JdbcAdapter implements Adapter {
             return new SchemaPlan(changes, () -> {
                 if (!actual.equals(inspect()))
                     throw new TavaException.Schema("Schema changed after planning; create a new plan");
-                additive.application().run();
+                additive.apply(new ApplyOptions(true, true));
             });
         }
 

@@ -3,6 +3,8 @@ package eu.mikart.tava.query;
 import static org.junit.jupiter.api.Assertions.*;
 
 import eu.mikart.tava.TavaException;
+import eu.mikart.tava.data.Page;
+import eu.mikart.tava.schema.annotation.Field;
 import eu.mikart.tava.spi.KeysetCursor;
 import java.math.BigDecimal;
 import java.sql.Date;
@@ -12,11 +14,13 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -205,7 +209,7 @@ class QueryValidationTest {
                 NullPointerException.class,
                 () -> Mutation.builder().increment(new FieldRef<>("count", Integer.class), null));
 
-        FieldRef<Collection<String>> tags = stringCollectionField("tags");
+        FieldRef<Collection<String>> tags = FieldRef.collection("tags", String.class);
         Mutation appendIfAbsent =
                 Mutation.builder().appendIfAbsent(tags, "newTag").build();
         assertEquals(
@@ -286,8 +290,78 @@ class QueryValidationTest {
         assertEquals("ids", ((Predicate.Comparison) inWithFieldRef).field());
     }
 
-    @SuppressWarnings("unchecked")
-    private static FieldRef<Collection<String>> stringCollectionField(String name) {
-        return (FieldRef<Collection<String>>) (FieldRef<?>) new FieldRef<>(name, Collection.class);
+    @Test
+    void typedFieldsBuildPortableExpressions() {
+        var score = FieldRef.of("score", Integer.class);
+        var name = FieldRef.of("name", String.class);
+        var tags = FieldRef.collection("tags", String.class);
+        assertEquals(Predicate.ne("score", 3), score.ne(3));
+        assertEquals(Predicate.lt("score", 3), score.lt(3));
+        assertEquals(Predicate.lte("score", 3), Predicate.lte(score, 3));
+        assertEquals(Predicate.gt("score", 3), Predicate.gt(score, 3));
+        assertEquals(Predicate.gte("score", 3), score.gte(3));
+        assertEquals(Predicate.in("score", List.of(1, 3)), score.in(List.of(1, 3)));
+        assertEquals(Predicate.isNull("score"), score.isNull());
+        assertEquals(Predicate.isNotNull("score"), score.isNotNull());
+        assertEquals(Predicate.startsWith("name", "A"), Predicate.startsWith(name, "A"));
+        assertEquals(Predicate.contains("name", "A"), Predicate.contains(name, "A"));
+        assertEquals(Predicate.contains("tags", "A"), Predicate.contains(tags, "A"));
+        Query query = Query.builder()
+                .project(score, name)
+                .sort(score.desc(), name.asc())
+                .build();
+        assertEquals(List.of("score", "name"), query.projection());
+        assertEquals(List.of(Sort.desc("score"), Sort.asc("name")), query.sorting());
+    }
+
+    record MappedFields(@Field("display_name") String name, int score) {}
+
+    @Test
+    void recordFieldsResolveMappedNamesAndRejectWrongTypes() {
+        assertEquals(FieldRef.of("display_name", String.class), FieldRef.of(MappedFields.class, "name", String.class));
+        assertEquals(FieldRef.of("score", Integer.class), FieldRef.of(MappedFields.class, "score", Integer.class));
+        assertThrows(IllegalArgumentException.class, () -> FieldRef.of(MappedFields.class, "missing", String.class));
+        assertThrows(IllegalArgumentException.class, () -> FieldRef.of(MappedFields.class, "score", String.class));
+    }
+
+    @Test
+    void boundPagesRetainQueryAndIncludeEmptyPages() {
+        Query initial = Query.builder()
+                .where(Predicate.eq("active", true))
+                .project("id")
+                .sort(Sort.asc("id"))
+                .limit(7)
+                .cursor("start")
+                .build();
+        var requests = new ArrayList<Query>();
+        var pages = Pages.<Integer>cursor(initial, query -> {
+            requests.add(query);
+            return requests.size() == 1 ? new Page<>(List.of(), "second") : new Page<>(List.of(42), null);
+        });
+        assertTrue(requests.isEmpty());
+        assertTrue(pages.hasNext());
+        assertTrue(requests.isEmpty());
+        assertEquals(List.of(), pages.next().items());
+        assertEquals(List.of(42), pages.next().items());
+        assertFalse(pages.hasNext());
+        assertThrows(NoSuchElementException.class, pages::next);
+        assertEquals(List.of(initial, initial.withCursor("second")), requests);
+        assertEquals("start", initial.cursor());
+    }
+
+    @Test
+    void pageAndItemTraversalRejectRepeatedCursors() {
+        var cursor = Pages.<Integer>cursor(Query.all(), query -> new Page<>(List.of(), "repeat"));
+        cursor.next();
+        assertThrows(IllegalStateException.class, cursor::next);
+        assertFalse(cursor.hasNext());
+        try (var stream = Pages.<Integer>stream(Query.all(), query -> new Page<>(List.of(), "repeat"))) {
+            assertThrows(IllegalStateException.class, stream::count);
+        }
+        try (var stream = Pages.<Integer>stream(
+                Query.all(),
+                query -> query.cursor() == null ? new Page<>(List.of(), "next") : new Page<>(List.of(42), null))) {
+            assertEquals(List.of(42), stream.toList());
+        }
     }
 }

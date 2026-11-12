@@ -10,6 +10,7 @@ import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.QueryDiagnostics;
 import eu.mikart.tava.schema.Schema;
 import eu.mikart.tava.schema.SchemaRenames;
+import eu.mikart.tava.schema.plan.ApplyOptions;
 import eu.mikart.tava.schema.plan.SchemaPlan;
 import java.util.List;
 import java.util.Objects;
@@ -103,7 +104,7 @@ public final class ExceptionTranslatingAdapter implements Adapter {
         return new SchemaPlan(
                 plan.changes(),
                 () -> call(() -> {
-                    plan.application().run();
+                    plan.apply(new ApplyOptions(true, true));
                     return null;
                 }));
     }

@@ -50,4 +50,23 @@ public record Sort(@NotNull String field, @NotNull Direction direction) {
     public static @NotNull Sort desc(final @NotNull String field) {
         return new Sort(field, Direction.DESC);
     }
+    /**
+     * Creates a portable field expression.
+     *
+     * @param field typed field reference
+     * @return ascending sort order
+     */
+    public static Sort asc(FieldRef<?> field) {
+        return asc(field.name());
+    }
+
+    /**
+     * Creates a portable field expression.
+     *
+     * @param field typed field reference
+     * @return descending sort order
+     */
+    public static Sort desc(FieldRef<?> field) {
+        return desc(field.name());
+    }
 }

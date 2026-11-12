@@ -44,6 +44,25 @@ import org.junit.jupiter.api.io.TempDir;
 
 class DataTransferTest {
     @Test
+    void namedOptionsPreserveDefaultsAndValidatePageSize() {
+        var options = TransferOptions.builder().build();
+        assertEquals(500, options.batchSize());
+        assertFalse(options.allowLossy());
+        assertTrue(options.applySchema());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> TransferOptions.builder().batchSize(0).build());
+        var custom = TransferOptions.builder()
+                .batchSize(42)
+                .allowLossy(true)
+                .applySchema(false)
+                .build();
+        assertEquals(42, custom.batchSize());
+        assertTrue(custom.allowLossy());
+        assertFalse(custom.applySchema());
+    }
+
+    @Test
     void readsLegacyVersionOneCheckpoints(@TempDir Path directory) throws Exception {
         var store = new FileTransferCheckpointStore(directory);
         var checkpoint = new TransferCheckpoint(

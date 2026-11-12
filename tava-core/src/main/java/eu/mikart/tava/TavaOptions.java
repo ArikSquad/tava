@@ -60,4 +60,113 @@ public record TavaOptions(
     public static TavaOptions defaults() {
         return DEFAULTS;
     }
+
+    /**
+     * Creates a builder initialized with the default operation controls.
+     *
+     * @return settings builder
+     */
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /** Configures named operation controls; validation occurs when building. */
+    public static final class Builder {
+        private Builder() {}
+
+        private Duration timeout = DEFAULTS.timeout();
+        private int maxAsyncOperations = DEFAULTS.maxAsyncOperations();
+        private int defaultPageSize = DEFAULTS.defaultPageSize();
+        private int maxPageSize = DEFAULTS.maxPageSize();
+        private int jdbcBatchSize = DEFAULTS.jdbcBatchSize();
+        private boolean allowScans = DEFAULTS.allowScans();
+        private Consumer<OperationEvent> listener = DEFAULTS.listener();
+
+        /**
+         * Sets {@link TavaOptions#timeout()}.
+         *
+         * @param value configured value
+         * @return this builder
+         */
+        public Builder timeout(Duration value) {
+            this.timeout = value;
+            return this;
+        }
+
+        /**
+         * Sets {@link TavaOptions#maxAsyncOperations()}.
+         *
+         * @param value configured value
+         * @return this builder
+         */
+        public Builder maxAsyncOperations(int value) {
+            this.maxAsyncOperations = value;
+            return this;
+        }
+
+        /**
+         * Sets {@link TavaOptions#defaultPageSize()}.
+         *
+         * @param value configured value
+         * @return this builder
+         */
+        public Builder defaultPageSize(int value) {
+            this.defaultPageSize = value;
+            return this;
+        }
+
+        /**
+         * Sets {@link TavaOptions#maxPageSize()}.
+         *
+         * @param value configured value
+         * @return this builder
+         */
+        public Builder maxPageSize(int value) {
+            this.maxPageSize = value;
+            return this;
+        }
+
+        /**
+         * Sets {@link TavaOptions#jdbcBatchSize()}.
+         *
+         * @param value configured value
+         * @return this builder
+         */
+        public Builder jdbcBatchSize(int value) {
+            this.jdbcBatchSize = value;
+            return this;
+        }
+
+        /**
+         * Sets {@link TavaOptions#allowScans()}.
+         *
+         * @param value configured value
+         * @return this builder
+         */
+        public Builder allowScans(boolean value) {
+            this.allowScans = value;
+            return this;
+        }
+
+        /**
+         * Sets {@link TavaOptions#listener()}.
+         *
+         * @param value configured value
+         * @return this builder
+         */
+        public Builder listener(Consumer<OperationEvent> value) {
+            this.listener = value;
+            return this;
+        }
+
+        /**
+         * Creates validated operation controls.
+         *
+         * @return immutable settings
+         */
+        public TavaOptions build() {
+            return new TavaOptions(
+                    timeout, maxAsyncOperations, defaultPageSize, maxPageSize, jdbcBatchSize, allowScans, listener);
+        }
+    }
 }

@@ -35,11 +35,10 @@ record Account(
         @Generated(GeneratedValue.NOW) Instant createdAt
 ) {}
 
-Schema schema = Schema.builder().record(Account.class).build();
+Schema schema = Schema.of(Account.class);
 
 try(Tava tava = Tava.open(Postgres.connect(jdbcUrl, user, password))) {
-    SchemaPlan plan = tava.plan(schema);
-    plan.apply(); // destructive and lossy changes require explicit options
+    tava.schema().ensure(schema); // safe additive setup; use SchemaHistory for versioned migrations
 
     var accounts = tava.entity(Account.class);
     accounts.insert(new Account(UUID.randomUUID(), "ada@example.com", 7, null));

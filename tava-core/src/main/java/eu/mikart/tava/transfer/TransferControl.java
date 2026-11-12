@@ -41,6 +41,78 @@ public record TransferControl(Duration timeout, BooleanSupplier cancelled, int m
         return new TransferControl(Duration.ZERO, () -> false, 1000, 100000);
     }
 
+    /**
+     * Creates a builder with the default cancellation and memory controls.
+     *
+     * @return controls builder
+     */
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /** Configures named transfer controls. */
+    public static final class Builder {
+        private Builder() {}
+
+        private Duration timeout = Duration.ZERO;
+        private BooleanSupplier cancelled = () -> false;
+        private int maxIssues = 1000;
+        private int maxTrackedCursors = 100000;
+
+        /**
+         * Sets {@link TransferControl#timeout()}.
+         *
+         * @param value configured value
+         * @return this builder
+         */
+        public Builder timeout(Duration value) {
+            this.timeout = value;
+            return this;
+        }
+
+        /**
+         * Sets {@link TransferControl#cancelled()}.
+         *
+         * @param value configured value
+         * @return this builder
+         */
+        public Builder cancelled(BooleanSupplier value) {
+            this.cancelled = value;
+            return this;
+        }
+
+        /**
+         * Sets {@link TransferControl#maxIssues()}.
+         *
+         * @param value configured value
+         * @return this builder
+         */
+        public Builder maxIssues(int value) {
+            this.maxIssues = value;
+            return this;
+        }
+
+        /**
+         * Sets {@link TransferControl#maxTrackedCursors()}.
+         *
+         * @param value configured value
+         * @return this builder
+         */
+        public Builder maxTrackedCursors(int value) {
+            this.maxTrackedCursors = value;
+            return this;
+        }
+
+        /**
+         * Creates validated transfer controls.
+         *
+         * @return immutable controls
+         */
+        public TransferControl build() {
+            return new TransferControl(timeout, cancelled, maxIssues, maxTrackedCursors);
+        }
+    }
+
     void check(long started) {
         if (Thread.currentThread().isInterrupted() || cancelled.getAsBoolean())
             throw new IllegalStateException("Transfer cancelled");

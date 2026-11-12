@@ -48,17 +48,15 @@ Default options:
 import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.transfer.TransferOptions;
 
-TransferOptions options = new TransferOptions(
-        1_000,
-        false,
-        true,
-        record -> EntityRecord.builder()
+TransferOptions options = TransferOptions.builder()
+        .batchSize(1_000)
+        .transform(record -> EntityRecord.builder()
                 .set("id", record.get("id"))
                 .set("email", normalizeEmail(record.get("email", String.class)))
                 .set("createdAt", record.get("createdAt"))
-                .build(),
-        (entity, count) -> logger.info("{}: {}", entity, count)
-);
+                .build())
+        .progress((entity, count) -> logger.info("{}: {}", entity, count))
+        .build();
 ```
 
 ## Transform Records
@@ -66,17 +64,13 @@ TransferOptions options = new TransferOptions(
 The transform runs before a record is inserted into the target.
 
 ```java title="RedactTransfer.java"
-TransferOptions options = new TransferOptions(
-        500,
-        false,
-        true,
-        record -> EntityRecord.builder()
+TransferOptions options = TransferOptions.builder()
+        .transform(record -> EntityRecord.builder()
                 .set("id", record.get("id"))
                 .set("email", record.get("email"))
                 .set("metadata", Map.of("redacted", true))
-                .build(),
-        TransferOptions.ProgressListener.NONE
-);
+                .build())
+        .build();
 ```
 
 This is useful for:
@@ -163,8 +157,10 @@ or online migration tooling. Use it when you want a schema-aware application-lev
 Both copy APIs accept a final `TransferControl` argument:
 
 ```java
-var control = new TransferControl(
-        Duration.ofMinutes(30), cancelled::get, 1_000, 100_000);
+var control = TransferControl.builder()
+        .timeout(Duration.ofMinutes(30))
+        .cancelled(cancelled::get)
+        .build();
 TransferReport report = DataTransfer.copy(source, target, schema, options, control);
 ```
 

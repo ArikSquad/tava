@@ -28,6 +28,19 @@ public record Schema(@NotNull List<EntityDefinition> entities) {
     }
 
     /**
+     * Creates a schema from record types in declaration order.
+     *
+     * @param recordTypes record types to describe
+     * @return immutable schema
+     */
+    @SafeVarargs
+    public static @NotNull Schema of(Class<? extends Record>... recordTypes) {
+        Builder builder = builder();
+        for (Class<? extends Record> type : recordTypes) builder.record(type);
+        return builder.build();
+    }
+
+    /**
      * Creates a builder for an entity schema.
      *
      * @return a new schema builder

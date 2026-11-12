@@ -10,6 +10,26 @@ import org.jetbrains.annotations.NotNull;
  */
 public record ApplyOptions(boolean allowLossy, boolean allowDestructive) {
     /**
+     * Allows the named risks; unsupported changes can never be allowed.
+     *
+     * @param risks risks to allow
+     * @return explicit risk allowances
+     */
+    public static @NotNull ApplyOptions allowing(ChangeRisk... risks) {
+        boolean lossy = false;
+        boolean destructive = false;
+        for (ChangeRisk risk : risks) {
+            switch (risk) {
+                case SAFE -> {}
+                case LOSSY -> lossy = true;
+                case DESTRUCTIVE -> destructive = true;
+                case UNSUPPORTED -> throw new IllegalArgumentException("Unsupported changes cannot be allowed");
+            }
+        }
+        return new ApplyOptions(lossy, destructive);
+    }
+
+    /**
      * Returns options that reject lossy and destructive changes.
      *
      * @return options with both risk allowances disabled

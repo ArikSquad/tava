@@ -191,27 +191,62 @@ exceptional. A conflict result contains portable `ConflictDetail` entries (kind,
 constraint when known, backend code, and message), so callers do not need to inspect a
 driver exception.
 
-## Type-safe fields and atomic mutations
+## Typed Fields and Atomic Mutations
 
-Expose field references beside application records (or generate them in your model
-generator) and use them in predicates and mutations:
+Add the core artifact to the annotation processor path to generate field companions
+for top-level, non-generic records annotated with `@Entity`:
+
+```kotlin
+dependencies {
+    annotationProcessor("eu.mikart.tava:tava-core:1.3.0")
+}
+```
+
+For `Account`, the processor generates `AccountFields`. Fields retain their Java types
+(including collection element types), and `@Field` storage names are resolved once:
 
 ```java
-static final FieldRef<Integer> SCORE = FieldRef.of("score", Integer.class);
-static final FieldRef<Collection<UUID>> EMBLEMS = FieldRef.of("emblems", (Class) Collection.class);
+var query = Query.builder()
+        .where(AccountFields.score.gte(100))
+        .sort(AccountFields.createdAt.desc())
+        .limit(50)
+        .build();
 
 Mutation mutation = Mutation.builder()
-        .increment(SCORE, 1)
-        .appendIfAbsent(EMBLEMS, emblemId)
-        .remove(EMBLEMS, retiredEmblemId)
+        .increment(AccountFields.score, 1)
+        .build();
+
+for (var page : accounts.pages(query)) {
+    page.items().forEach(this::export);
+}
+```
+
+Page traversal binds the original query and entity to its continuation tokens. It is
+lazy, single-use, and preserves filtering, sorting, projection and page size. Streams
+use the same traversal. For explicit token handling, `query.withCursor(token)` copies
+the original request with a new token.
+
+Fields may also be declared without code generation:
+
+```java
+var score = FieldRef.of(Account.class, "score", Integer.class);
+FieldRef<Collection<UUID>> emblems = FieldRef.collection("emblems", UUID.class);
+var mutation = Mutation.builder()
+        .increment(score, 1)
+        .appendIfAbsent(emblems, emblemId)
+        .remove(emblems, retiredEmblemId)
         .build();
 ```
 
-`increment`, `appendIfAbsent`, and `remove` are database-side operations. MongoDB maps
-collection additions to `$addToSet`; SQLite uses JSON operations. Unsupported
-operators throw `TavaException.Capability`; they never silently fall back to a
-read-modify-write sequence. The old `append(...)` builder method remains as a
-deprecated alias for `appendIfAbsent(...)`.
+Record-aware references validate the declared component type and resolve `@Field` names.
+String references remain available for dynamic schemas. Typed references support
+comparisons, membership, null checks, sorting and projections; collection element types
+help compilation but do not validate values already stored in a database.
+
+`increment`, `appendIfAbsent`, and `remove` are database operations. Unsupported operators
+throw `TavaException.Capability`; typed expressions do not imply backend support.
+`contains` retains the adapter's string or collection semantics. The deprecated
+`append(...)` alias retains its existing conditional behavior.
 
 ## Transactions and asynchronous calls
 

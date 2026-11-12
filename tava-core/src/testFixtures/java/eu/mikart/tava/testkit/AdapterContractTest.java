@@ -6,8 +6,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import eu.mikart.tava.Tava;
 import eu.mikart.tava.capability.Feature;
 import eu.mikart.tava.data.EntityRecord;
-import eu.mikart.tava.migration.Migration;
-import eu.mikart.tava.migration.MigrationResult;
+import eu.mikart.tava.migration.SchemaHistory;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
@@ -179,143 +178,70 @@ public abstract class AdapterContractTest {
     }
 
     @Test
-    void migrationsApplyOnceTrackPendingRunPagedDataStepsAndRollback() {
+    void historyRunsPendingVersionsAndReversesDataChangesInOrder() {
         String entity = uniqueEntity("mig");
-        String createId = entity + "_001_create";
-        String backfillId = entity + "_002_backfill";
-        Migration create = Migration.builder(createId)
-                .upSchema(Schema.builder()
-                        .entity(entity, builder -> {
-                            builder.string("id").identity().length(36);
-                            builder.string("email").required().length(255);
-                            builder.integer("score").required();
-                            builder.string("note").length(255);
-                            builder.bool("active").required();
-                        })
-                        .build())
-                .up("Seed migration rows", context -> {
-                    context.insert(
-                            entity,
-                            EntityRecord.builder()
-                                    .set("id", "a")
-                                    .set("email", "ada@example.com")
-                                    .set("score", 1)
-                                    .set("note", null)
-                                    .set("active", true)
-                                    .build());
-                    context.insert(
-                            entity,
-                            EntityRecord.builder()
-                                    .set("id", "g")
-                                    .set("email", "grace@example.com")
-                                    .set("score", 2)
-                                    .set("note", null)
-                                    .set("active", true)
-                                    .build());
-                    context.insert(
-                            entity,
-                            EntityRecord.builder()
-                                    .set("id", "l")
-                                    .set("email", "linus@example.com")
-                                    .set("score", 3)
-                                    .set("note", null)
-                                    .set("active", false)
-                                    .build());
-                })
-                .down(
-                        "Delete seeded migration rows",
-                        context -> List.of("a", "g", "l").forEach(id -> context.delete(entity, Predicate.eq("id", id))))
+        Schema schema = accountSchema(entity);
+        var history = SchemaHistory.builder()
+                .journal(entity + "_history")
+                .version("layout", schema, change -> change.up(context -> context.apply(context.next())))
+                .version(
+                        "seed",
+                        schema,
+                        change -> change.up(context -> {
+                                    for (String id : List.of("a", "g", "l")) {
+                                        context.records(entity)
+                                                .insert(EntityRecord.builder()
+                                                        .set("id", id)
+                                                        .set("email", id + "@example.com")
+                                                        .set("score", 1)
+                                                        .set("note", null)
+                                                        .set("active", true)
+                                                        .build());
+                                    }
+                                })
+                                .down(context -> List.of("a", "g", "l")
+                                        .forEach(id -> context.records(entity).delete(Predicate.eq("id", id)))))
+                .version(
+                        "backfill",
+                        schema,
+                        change -> change.up(context -> {
+                                    try (var rows = context.records(entity).stream(migrationPageQuery())) {
+                                        rows.forEach(record -> context.records(entity)
+                                                .update(
+                                                        Predicate.eq("id", record.get("id")),
+                                                        Mutation.builder()
+                                                                .set("note", "migrated-" + record.get("id"))
+                                                                .build()));
+                                    }
+                                })
+                                .down(context -> List.of("a", "g", "l")
+                                        .forEach(id -> context.records(entity)
+                                                .update(
+                                                        Predicate.eq("id", id),
+                                                        Mutation.builder()
+                                                                .set("note", null)
+                                                                .build()))))
                 .build();
-        Migration backfill = Migration.builder(backfillId)
-                .up("Backfill notes in pages", context -> {
-                    long seen = context.forEach(
-                            entity,
-                            migrationPageQuery(),
-                            record -> context.update(
-                                    entity,
-                                    Predicate.eq("id", record.get("id")),
-                                    Mutation.builder()
-                                            .set("note", "migrated-" + record.get("id"))
-                                            .build()));
-                    assertEquals(3, seen);
-                })
-                .down(
-                        "Clear backfilled notes",
-                        context -> context.forEach(
-                                entity,
-                                migrationPageQuery(),
-                                record -> context.update(
-                                        entity,
-                                        Predicate.eq("id", record.get("id")),
-                                        Mutation.builder().set("note", null).build())))
-                .build();
-        Migration irreversible = Migration.up(entity + "_003_irreversible", context -> {});
-
         try (Tava tava = openTava(entity)) {
-            assertEquals(List.of(create, backfill), tava.migrations().pending(List.of(create, backfill)));
-
-            List<MigrationResult> first = tava.migrations().apply(create, backfill);
-            assertEquals(2, first.size());
-            assertTrue(first.stream().allMatch(MigrationResult::applied));
-            assertEquals(createId, first.getFirst().id());
-            assertEquals(backfillId, first.get(1).id());
-            assertTrue(first.getFirst().changes().stream()
-                    .anyMatch(change -> change.description().contains(entity)));
-            assertEquals(
-                    3,
-                    first.getFirst().operations().stream()
-                            .filter(operation -> operation.description().startsWith("Insert into " + entity))
-                            .mapToLong(operation -> operation.affectedRows())
-                            .sum());
-            assertEquals(
-                    3,
-                    first.get(1).operations().stream()
-                            .filter(operation -> operation.description().startsWith("Update " + entity))
-                            .mapToLong(operation -> operation.affectedRows())
-                            .sum());
-            assertTrue(first.get(1).operations().stream()
-                    .anyMatch(operation ->
-                            operation.description().equals("Iterate " + entity) && operation.affectedRows() == 3));
-
-            assertAppliedIds(tava, createId, backfillId);
-            assertTrue(tava.migrations().pending(List.of(create, backfill)).isEmpty());
+            assertTrue(history.current(tava).isEmpty());
+            history.up(tava);
+            history.up(tava);
+            assertEquals("backfill", history.current(tava).orElseThrow());
             assertEquals(
                     List.of("migrated-a", "migrated-g", "migrated-l"),
                     tava.records(entity).find(Query.all()).items().stream()
                             .map(record -> record.get("note"))
                             .sorted()
                             .toList());
-
-            List<MigrationResult> second = tava.migrations().apply(create, backfill);
-            assertEquals(2, second.size());
-            assertTrue(second.stream().noneMatch(MigrationResult::applied));
-            assertTrue(second.stream().allMatch(result -> result.operations().isEmpty()));
-
-            MigrationResult rollbackBackfill = tava.migrations().rollback(backfill);
-            assertTrue(rollbackBackfill.applied());
-            assertEquals(
-                    3,
-                    rollbackBackfill.operations().stream()
-                            .filter(operation -> operation.description().startsWith("Update " + entity))
-                            .mapToLong(operation -> operation.affectedRows())
-                            .sum());
-            assertAppliedIds(tava, createId);
-            assertEquals(
-                    3,
-                    tava.records(entity)
-                            .find(Query.builder()
-                                    .where(Predicate.eq("note", null))
-                                    .build())
-                            .items()
-                            .size());
-
-            MigrationResult rollbackCreate = tava.migrations().rollback(create);
-            assertTrue(rollbackCreate.applied());
-            assertTrue(tava.records(entity).find(Query.all()).items().isEmpty());
-            assertAppliedIds(tava);
-
-            assertFalse(tava.migrations().rollback(create).applied());
-            assertThrows(IllegalArgumentException.class, () -> tava.migrations().rollback(irreversible));
+            history.down(tava);
+            assertEquals("seed", history.current(tava).orElseThrow());
+            assertEquals(3, tava.records(entity).count(Predicate.isNull("note")));
+            history.to(tava, "layout");
+            assertEquals("layout", history.current(tava).orElseThrow());
+            assertEquals(0, tava.records(entity).count(Predicate.all()));
+            assertThrows(IllegalStateException.class, () -> history.down(tava));
+            history.to(tava, "backfill");
+            assertEquals(3, tava.records(entity).count(Predicate.all()));
         }
     }
 
@@ -401,17 +327,6 @@ public abstract class AdapterContractTest {
     private static Number number(Object value) {
         if (value instanceof Number number) return number;
         return new BigDecimal(value.toString());
-    }
-
-    private void assertAppliedIds(Tava tava, String... expected) {
-        List<String> applied = tava.migrations().applied();
-        if (supportsGlobalSorting()) {
-            assertEquals(List.of(expected), applied);
-        } else {
-            assertEquals(
-                    List.of(expected).stream().sorted().toList(),
-                    applied.stream().sorted().toList());
-        }
     }
 
     private Query migrationPageQuery() {

@@ -221,6 +221,16 @@ public final class Records {
     }
 
     /**
+     * Creates a lazy, single-use traversal of pages bound to this entity and query.
+     *
+     * @param query initial query
+     * @return page iterator, including empty pages
+     */
+    public Pages.Cursor<EntityRecord> pages(Query query) {
+        return Pages.cursor(query, this::find);
+    }
+
+    /**
      * Describes the adapter access path and effective ordering.
      *
      * @param query query to inspect

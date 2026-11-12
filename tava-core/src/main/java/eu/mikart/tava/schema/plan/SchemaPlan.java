@@ -1,6 +1,7 @@
 package eu.mikart.tava.schema.plan;
 
 import java.util.List;
+import java.util.Objects;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -20,6 +21,19 @@ public record SchemaPlan(
      */
     public SchemaPlan {
         changes = List.copyOf(changes);
+        Objects.requireNonNull(application, "application");
+    }
+
+    /**
+     * Returns an operation that applies this plan with safe risk allowances.
+     *
+     * @return guarded application operation
+     * @deprecated Use {@link #apply()} or {@link #apply(ApplyOptions)} for explicit risk handling.
+     */
+    @Override
+    @Deprecated
+    public @NotNull Runnable application() {
+        return this::apply;
     }
 
     /**

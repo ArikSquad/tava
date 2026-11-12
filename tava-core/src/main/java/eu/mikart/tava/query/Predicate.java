@@ -253,4 +253,129 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
     static @NotNull Predicate or(final @NotNull Predicate... predicates) {
         return new Junction(false, List.of(predicates));
     }
+    /**
+     * Creates a typed comparison using the adapter's field semantics.
+     *
+     * @param <T> field value type
+     * @param field field reference
+     * @param value comparison value
+     * @return comparison predicate
+     */
+    static <T> Predicate ne(FieldRef<T> field, T value) {
+        return ne(field.name(), value);
+    }
+
+    /**
+     * Creates a typed comparison using the adapter's field semantics.
+     *
+     * @param <T> field value type
+     * @param field field reference
+     * @param value comparison value
+     * @return comparison predicate
+     */
+    static <T> Predicate lt(FieldRef<T> field, T value) {
+        return lt(field.name(), value);
+    }
+
+    /**
+     * Creates a typed comparison using the adapter's field semantics.
+     *
+     * @param <T> field value type
+     * @param field field reference
+     * @param value comparison value
+     * @return comparison predicate
+     */
+    static <T> Predicate lte(FieldRef<T> field, T value) {
+        return lte(field.name(), value);
+    }
+
+    /**
+     * Creates a typed comparison using the adapter's field semantics.
+     *
+     * @param <T> field value type
+     * @param field field reference
+     * @param value comparison value
+     * @return comparison predicate
+     */
+    static <T> Predicate gt(FieldRef<T> field, T value) {
+        return gt(field.name(), value);
+    }
+
+    /**
+     * Creates a typed comparison using the adapter's field semantics.
+     *
+     * @param <T> field value type
+     * @param field field reference
+     * @param value comparison value
+     * @return comparison predicate
+     */
+    static <T> Predicate gte(FieldRef<T> field, T value) {
+        return gte(field.name(), value);
+    }
+
+    /**
+     * Creates a typed null check.
+     *
+     * @param field field reference
+     * @return null-check predicate
+     */
+    static Predicate isNull(FieldRef<?> field) {
+        return isNull(field.name());
+    }
+
+    /**
+     * Creates a typed null check.
+     *
+     * @param field field reference
+     * @return null-check predicate
+     */
+    static Predicate isNotNull(FieldRef<?> field) {
+        return isNotNull(field.name());
+    }
+
+    /**
+     * Creates a typed membership predicate.
+     *
+     * @param <T> field value type
+     * @param field field reference
+     * @param values values to match
+     * @return membership predicate
+     */
+    static <T> Predicate in(FieldRef<T> field, Collection<? extends T> values) {
+        return in(field.name(), values);
+    }
+
+    /**
+     * Creates a string-prefix predicate.
+     *
+     * @param field string field reference
+     * @param value prefix
+     * @return prefix predicate
+     */
+    static Predicate startsWith(FieldRef<String> field, String value) {
+        return startsWith(field.name(), value);
+    }
+
+    /**
+     * Creates a substring predicate.
+     *
+     * @param field string field reference
+     * @param value substring
+     * @return contains predicate
+     */
+    static Predicate contains(FieldRef<String> field, String value) {
+        return contains(field.name(), value);
+    }
+
+    /**
+     * Creates a collection containment predicate.
+     *
+     * @param <E> collection element type
+     * @param field collection field reference
+     * @param value element to find
+     * @return contains predicate
+     */
+    static <E> Predicate contains(FieldRef<? extends Collection<E>> field, E value) {
+        return contains(field.name(), value);
+    }
 }

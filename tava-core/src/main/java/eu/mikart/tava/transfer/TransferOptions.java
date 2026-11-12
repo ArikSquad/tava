@@ -44,6 +44,90 @@ public record TransferOptions(
         return new TransferOptions(500, false, true, UnaryOperator.identity(), ProgressListener.NONE);
     }
 
+    /**
+     * Starts a builder with conservative defaults.
+     *
+     * @return options builder
+     */
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /** Builds transfer options with named settings. */
+    public static final class Builder {
+        private int batchSize = 500;
+        private boolean allowLossy;
+        private boolean applySchema = true;
+        private UnaryOperator<EntityRecord> transform = UnaryOperator.identity();
+        private ProgressListener progress = ProgressListener.NONE;
+
+        private Builder() {}
+
+        /**
+         * Sets the maximum page size.
+         *
+         * @param value page size
+         * @return this builder
+         */
+        public Builder batchSize(int value) {
+            batchSize = value;
+            return this;
+        }
+
+        /**
+         * Controls discarding fields absent from the target.
+         *
+         * @param value whether discarding fields is allowed
+         * @return this builder
+         */
+        public Builder allowLossy(boolean value) {
+            allowLossy = value;
+            return this;
+        }
+
+        /**
+         * Controls applying the target schema before copying.
+         *
+         * @param value whether to apply the schema
+         * @return this builder
+         */
+        public Builder applySchema(boolean value) {
+            applySchema = value;
+            return this;
+        }
+
+        /**
+         * Sets the record transformation.
+         *
+         * @param value transformation, or null for identity
+         * @return this builder
+         */
+        public Builder transform(UnaryOperator<EntityRecord> value) {
+            transform = value;
+            return this;
+        }
+
+        /**
+         * Sets the progress listener.
+         *
+         * @param value listener, or null for no listener
+         * @return this builder
+         */
+        public Builder progress(ProgressListener value) {
+            progress = value;
+            return this;
+        }
+
+        /**
+         * Creates validated options.
+         *
+         * @return transfer options
+         */
+        public TransferOptions build() {
+            return new TransferOptions(batchSize, allowLossy, applySchema, transform, progress);
+        }
+    }
+
     /** Observes transfer progress after each successfully written record. */
     @FunctionalInterface
     public interface ProgressListener {
