@@ -573,6 +573,7 @@ public final class Entity<T extends Record> {
      *
      * @param query page request
      * @return one page of matching records
+     * @since 1.3.1
      */
     @Blocking
     public Page<T> findPage(Query query) {
@@ -586,6 +587,7 @@ public final class Entity<T extends Record> {
      * @param query page request
      * @param projectionType projection class
      * @return one projected page
+     * @since 1.3.1
      */
     @Blocking
     public <P extends Record> Page<P> findPage(Query query, Class<P> projectionType) {
@@ -599,6 +601,7 @@ public final class Entity<T extends Record> {
      * @param query initial page request
      * @param projectionType projection class
      * @return sequential projected stream
+     * @since 1.3.1
      */
     public <P extends Record> Stream<P> stream(Query query, Class<P> projectionType) {
         return Pages.stream(query, page -> findPage(page, projectionType));
@@ -611,6 +614,7 @@ public final class Entity<T extends Record> {
      * @param query initial page request
      * @param projectionType projection class
      * @return single-use page cursor
+     * @since 1.3.1
      */
     public <P extends Record> Pages.Cursor<P> pages(Query query, Class<P> projectionType) {
         return Pages.cursor(query, page -> findPage(page, projectionType));
@@ -621,6 +625,7 @@ public final class Entity<T extends Record> {
      *
      * @param query page request
      * @return asynchronous page
+     * @since 1.3.1
      */
     public CompletableFuture<Page<T>> findPageAsync(Query query) {
         return Async.submit(() -> findPage(query), executor);
@@ -633,6 +638,7 @@ public final class Entity<T extends Record> {
      * @param query page request
      * @param projectionType projection class
      * @return asynchronous projected page
+     * @since 1.3.1
      */
     public <P extends Record> CompletableFuture<Page<P>> findPageAsync(Query query, Class<P> projectionType) {
         return Async.submit(() -> findPage(query, projectionType), executor);
@@ -644,6 +650,7 @@ public final class Entity<T extends Record> {
      *
      * @param records records to insert
      * @return outcomes in input order
+     * @since 1.3.1
      */
     @Blocking
     public List<MutationResult> insertIfAbsent(List<T> records) {
@@ -655,6 +662,7 @@ public final class Entity<T extends Record> {
      *
      * @param records records to insert
      * @return outcomes in input order
+     * @since 1.3.1
      */
     public CompletableFuture<List<MutationResult>> insertIfAbsentAsync(List<T> records) {
         return Async.submit(() -> insertIfAbsent(records), executor);
@@ -666,6 +674,7 @@ public final class Entity<T extends Record> {
      *
      * @param records records to insert or update
      * @return outcomes in input order
+     * @since 1.3.1
      */
     @Blocking
     public List<MutationResult> upsert(List<T> records) {
@@ -677,6 +686,7 @@ public final class Entity<T extends Record> {
      *
      * @param records records to insert or update
      * @return outcomes in input order
+     * @since 1.3.1
      */
     public CompletableFuture<List<MutationResult>> upsertAsync(List<T> records) {
         return Async.submit(() -> upsert(records), executor);

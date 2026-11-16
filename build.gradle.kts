@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "eu.mikart.tava"
-version = "1.3.0"
+version = "1.3.1"
 
 allprojects {
     group = rootProject.group

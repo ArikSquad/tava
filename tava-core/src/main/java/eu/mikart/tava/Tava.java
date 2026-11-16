@@ -349,6 +349,7 @@ public final class Tava implements AutoCloseable {
      * @param callback transaction work
      * @param <R> result type
      * @return future containing the result after the transaction completes
+     * @since 1.3.1
      */
     public <R> CompletableFuture<R> transactionAsync(Function<Tava, R> callback) {
         Objects.requireNonNull(callback, "callback");
