@@ -21,6 +21,7 @@ import eu.mikart.tava.spi.SchemaManager;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -339,6 +340,20 @@ public final class Tava implements AutoCloseable {
         } finally {
             activeTransaction.unlock();
         }
+    }
+
+    /**
+     * Runs the entire transaction callback on the configured executor. Cancellation interrupts the worker. The callback
+     * must perform its operations synchronously using the supplied facade.
+     *
+     * @param callback transaction work
+     * @param <R> result type
+     * @return future containing the result after the transaction completes
+     * @since 1.3.1
+     */
+    public <R> CompletableFuture<R> transactionAsync(Function<Tava, R> callback) {
+        Objects.requireNonNull(callback, "callback");
+        return Async.submit(() -> transaction(callback), executor);
     }
 
     private static final class ScopedStore extends ForwardingEntityStore {

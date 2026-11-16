@@ -568,4 +568,127 @@ public final class Entity<T extends Record> {
     public CompletableFuture<QueryDiagnostics> explainAsync(Query query) {
         return Async.submit(() -> explain(query), executor);
     }
+    /**
+     * Finds exactly one page. Follow the returned cursor, or use {@link #stream(Query)} for all results.
+     *
+     * @param query page request
+     * @return one page of matching records
+     * @since 1.3.1
+     */
+    @Blocking
+    public Page<T> findPage(Query query) {
+        return find(query);
+    }
+
+    /**
+     * Finds exactly one projected page.
+     *
+     * @param <P> projection record type
+     * @param query page request
+     * @param projectionType projection class
+     * @return one projected page
+     * @since 1.3.1
+     */
+    @Blocking
+    public <P extends Record> Page<P> findPage(Query query, Class<P> projectionType) {
+        return find(query, projectionType);
+    }
+
+    /**
+     * Traverses all projected results lazily, following continuation cursors.
+     *
+     * @param <P> projection record type
+     * @param query initial page request
+     * @param projectionType projection class
+     * @return sequential projected stream
+     * @since 1.3.1
+     */
+    public <P extends Record> Stream<P> stream(Query query, Class<P> projectionType) {
+        return Pages.stream(query, page -> findPage(page, projectionType));
+    }
+
+    /**
+     * Traverses projected pages lazily, including empty pages.
+     *
+     * @param <P> projection record type
+     * @param query initial page request
+     * @param projectionType projection class
+     * @return single-use page cursor
+     * @since 1.3.1
+     */
+    public <P extends Record> Pages.Cursor<P> pages(Query query, Class<P> projectionType) {
+        return Pages.cursor(query, page -> findPage(page, projectionType));
+    }
+
+    /**
+     * Finds one page on the configured executor.
+     *
+     * @param query page request
+     * @return asynchronous page
+     * @since 1.3.1
+     */
+    public CompletableFuture<Page<T>> findPageAsync(Query query) {
+        return Async.submit(() -> findPage(query), executor);
+    }
+
+    /**
+     * Finds one projected page on the configured executor.
+     *
+     * @param <P> projection record type
+     * @param query page request
+     * @param projectionType projection class
+     * @return asynchronous projected page
+     * @since 1.3.1
+     */
+    public <P extends Record> CompletableFuture<Page<P>> findPageAsync(Query query, Class<P> projectionType) {
+        return Async.submit(() -> findPage(query, projectionType), executor);
+    }
+
+    /**
+     * Attempts inserts in input order. Conflicts are reported per record; other failures stop the batch. Earlier writes
+     * may remain committed if a later operation fails.
+     *
+     * @param records records to insert
+     * @return outcomes in input order
+     * @since 1.3.1
+     */
+    @Blocking
+    public List<MutationResult> insertIfAbsent(List<T> records) {
+        return records.stream().map(this::insertIfAbsent).toList();
+    }
+
+    /**
+     * Attempts a batch of inserts on the configured executor.
+     *
+     * @param records records to insert
+     * @return outcomes in input order
+     * @since 1.3.1
+     */
+    public CompletableFuture<List<MutationResult>> insertIfAbsentAsync(List<T> records) {
+        return Async.submit(() -> insertIfAbsent(records), executor);
+    }
+
+    /**
+     * Upserts records in input order. Each upsert is atomic; the batch is not atomic unless enclosed in a transaction.
+     * Earlier writes may remain committed if a later operation fails.
+     *
+     * @param records records to insert or update
+     * @return outcomes in input order
+     * @since 1.3.1
+     */
+    @Blocking
+    public List<MutationResult> upsert(List<T> records) {
+        return records.stream().map(this::upsert).toList();
+    }
+
+    /**
+     * Upserts a batch on the configured executor.
+     *
+     * @param records records to insert or update
+     * @return outcomes in input order
+     * @since 1.3.1
+     */
+    public CompletableFuture<List<MutationResult>> upsertAsync(List<T> records) {
+        return Async.submit(() -> upsert(records), executor);
+    }
 }
