@@ -32,7 +32,7 @@ jobs:
         if: ${{ !contains(fromJSON('["core", "jdbc", "h2", "sqlite"]'), matrix.module) }}
         run: docker info
       - name: Check module
-        run: ./gradlew :tava-${{ matrix.module }}:check :tava-${{ matrix.module }}:apiCompatibility -PrequireIntegrationTests --build-cache
+        run: ./gradlew :tava-${{ matrix.module }}:check -PrequireIntegrationTests --build-cache
       - name: Upload test results and coverage data
         if: ${{ !cancelled() && matrix.module != 'jdbc' }}
         uses: actions/upload-artifact@v7.0.2

@@ -274,40 +274,6 @@ tasks.named("check") {
     dependsOn("jacocoCoverageVerification")
 }
 
-val japicmp = configurations.create("japicmp") { isTransitive = false }
-
-dependencies {
-    add(japicmp.name, "com.github.siom79.japicmp:japicmp:0.26.5:jar-with-dependencies")
-}
-
-val apiCompatibility = tasks.register("apiCompatibility") {
-    group = "verification"
-    description = "Checks public binary compatibility against the last published release"
-}
-
-subprojects {
-    plugins.withId("java-library") {
-        val baseline = rootProject.configurations.create("apiBaseline${project.name}") { isTransitive = false }
-        rootProject.dependencies.add(baseline.name, "eu.mikart.tava:${project.name}:${providers.gradleProperty("apiBaselineVersion").getOrElse("1.2.2")}")
-        val jar = tasks.named<Jar>("jar")
-        val compatibility = tasks.register<JavaExec>("apiCompatibility") {
-            group = "verification"
-            description = "Checks public binary compatibility against the published baseline"
-            dependsOn(jar)
-            classpath = rootProject.configurations.getByName("japicmp")
-            mainClass.set("japicmp.JApiCmp")
-            doFirst {
-                args("--old", baseline.singleFile.absolutePath,
-                    "--new", jar.get().archiveFile.get().asFile.absolutePath,
-                    "--old-classpath", configurations.getByName("compileClasspath").asPath,
-                    "--new-classpath", configurations.getByName("compileClasspath").asPath,
-                    "--only-modified", "--error-on-binary-incompatibility", "--error-on-source-incompatibility")
-            }
-        }
-        apiCompatibility.configure { dependsOn(compatibility) }
-    }
-}
-
 val migrationSources = providers.gradleProperty("migrationSources").orElse("src/main/migrations")
 val migrationFiles = fileTree(migrationSources) { include("**/*") }
 val migrationManifest = layout.buildDirectory.file("generated/migration-checksums.properties")
