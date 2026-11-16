@@ -95,7 +95,8 @@ report.issues().forEach(issue ->
 If an insert fails, copying stops and the report is returned with `complete() == false`.
 Counts include the records successfully inserted before the failure. When the target
 supports portable transactions and bulk writes, ordinary copies use transactional batches;
-a failed batch is rolled back before retrying its already transformed records individually.
+recognized conflicts or unavailable transaction capabilities roll the batch back before
+retrying its already transformed records individually. Other batch failures stop the copy.
 The transfer also stops with an error issue if a source adapter repeats any cursor, which
 prevents a broken paging implementation from causing an infinite loop or duplicate copy.
 Diagnostics are deduplicated and capped at 1,000 entries, including a truncation notice.

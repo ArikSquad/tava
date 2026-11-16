@@ -15,6 +15,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.lang.reflect.WildcardType;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -253,27 +254,58 @@ final class RecordMapper<T extends Record> {
             return new ArrayList<>(values);
         }
         if (raw instanceof Map<?, ?> map && target.isRecord()) {
-            final RecordMetadata embeddedMetadata = metadata(target.asSubclass(Record.class));
-            final Object[] values = new Object[embeddedMetadata.components.length];
-            for (int i = 0; i < embeddedMetadata.components.length; i++) {
-                final Component child = embeddedMetadata.components[i];
-                values[i] = decode(child, map.get(child.name));
-            }
-            try {
-                return embeddedMetadata.constructor.newInstance(values);
-            } catch (ReflectiveOperationException failure) {
-                throw new TavaException.Mapping("Cannot decode embedded record", failure);
-            }
+            return decodeRecord(map, target);
         }
         return convert(raw, target);
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
     private Object decodeValue(final Object raw, final Type type) {
-        if (raw == null || !(type instanceof Class<?> target)) return raw;
+        if (raw == null) return null;
+        if (type instanceof WildcardType wildcard) {
+            Type[] upper = wildcard.getUpperBounds();
+            return upper.length == 0 ? raw : decodeValue(raw, upper[0]);
+        }
+        if (type instanceof ParameterizedType parameterized) {
+            if (!(parameterized.getRawType() instanceof Class<?> target)) return raw;
+            Type[] arguments = parameterized.getActualTypeArguments();
+            if (raw instanceof Collection<?> collection && Collection.class.isAssignableFrom(target)) {
+                Type elementType = arguments.length == 0 ? Object.class : arguments[0];
+                List<Object> values = collection.stream()
+                        .map(value -> decodeValue(value, elementType))
+                        .toList();
+                if (Set.class.isAssignableFrom(target)) return new LinkedHashSet<>(values);
+                return new ArrayList<>(values);
+            }
+            if (raw instanceof Map<?, ?> map && Map.class.isAssignableFrom(target)) {
+                Type keyType = arguments.length > 0 ? arguments[0] : Object.class;
+                Type valueType = arguments.length > 1 ? arguments[1] : Object.class;
+                Map<Object, Object> values = new LinkedHashMap<>();
+                map.forEach((key, value) -> values.put(decodeValue(key, keyType), decodeValue(value, valueType)));
+                return values;
+            }
+            if (raw instanceof Map<?, ?> map && target.isRecord()) return decodeRecord(map, target);
+            return decodeValue(raw, target);
+        }
+        if (!(type instanceof Class<?> target)) return raw;
         if (target.isEnum()) return Enum.valueOf(target.asSubclass(Enum.class), raw.toString());
         if (target == UUID.class) return UUID.fromString(raw.toString());
+        if (raw instanceof Map<?, ?> map && target.isRecord()) return decodeRecord(map, target);
         return convert(raw, target);
+    }
+
+    private Object decodeRecord(final Map<?, ?> map, final Class<?> target) {
+        final RecordMetadata embeddedMetadata = metadata(target.asSubclass(Record.class));
+        final Object[] values = new Object[embeddedMetadata.components.length];
+        for (int i = 0; i < embeddedMetadata.components.length; i++) {
+            final Component child = embeddedMetadata.components[i];
+            values[i] = decode(child, map.get(child.name));
+        }
+        try {
+            return embeddedMetadata.constructor.newInstance(values);
+        } catch (ReflectiveOperationException failure) {
+            throw new TavaException.Mapping("Cannot decode embedded record", failure);
+        }
     }
 
     @SuppressWarnings("unchecked")
