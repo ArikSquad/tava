@@ -26,14 +26,11 @@ public final class EntityFieldsProcessor extends AbstractProcessor {
         for (var annotation : annotations) {
             for (var element : round.getElementsAnnotatedWith(annotation)) {
                 if (!(element instanceof TypeElement record) || record.getKind() != ElementKind.RECORD) continue;
-                if (!record.getTypeParameters().isEmpty()
-                        || record.getNestingKind().isNested()) {
+                if (!record.getTypeParameters().isEmpty()) {
                     processingEnv
                             .getMessager()
                             .printMessage(
-                                    Diagnostic.Kind.WARNING,
-                                    "Field companions require a top-level, non-generic record",
-                                    record);
+                                    Diagnostic.Kind.WARNING, "Field companions require a non-generic record", record);
                     continue;
                 }
                 String packageName = processingEnv
@@ -41,7 +38,13 @@ public final class EntityFieldsProcessor extends AbstractProcessor {
                         .getPackageOf(record)
                         .getQualifiedName()
                         .toString();
-                String name = record.getSimpleName() + "Fields";
+                String name = record.getSimpleName().toString();
+                for (var enclosing = record.getEnclosingElement();
+                        enclosing instanceof TypeElement;
+                        enclosing = enclosing.getEnclosingElement()) {
+                    name = enclosing.getSimpleName() + "_" + name;
+                }
+                name += "Fields";
                 String qualifiedName = packageName.isEmpty() ? name : packageName + "." + name;
                 try (Writer writer = processingEnv
                         .getFiler()

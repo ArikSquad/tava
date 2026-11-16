@@ -12,6 +12,7 @@ import eu.mikart.tava.query.QueryDiagnostics;
 import eu.mikart.tava.schema.FieldDefinition;
 import eu.mikart.tava.schema.RecordSchemas;
 import eu.mikart.tava.spi.EntityStore;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -450,5 +451,131 @@ public final class Records {
      */
     public CompletableFuture<QueryDiagnostics> explainAsync(Query query) {
         return Async.submit(() -> explain(query), executor);
+    }
+    /**
+     * Finds exactly one page. Follow the returned cursor, or use {@link #stream(Query)} for all results.
+     *
+     * @param query page request
+     * @return one page of matching records
+     */
+    @Blocking
+    public Page<EntityRecord> findPage(Query query) {
+        return find(query);
+    }
+
+    /**
+     * Finds exactly one projected page.
+     *
+     * @param <P> projection record type
+     * @param query page request
+     * @param projectionType projection class
+     * @return one projected page
+     */
+    @Blocking
+    public <P extends Record> Page<P> findPage(Query query, Class<P> projectionType) {
+        return find(query, projectionType);
+    }
+
+    /**
+     * Traverses all projected results lazily, following continuation cursors.
+     *
+     * @param <P> projection record type
+     * @param query initial page request
+     * @param projectionType projection class
+     * @return sequential projected stream
+     */
+    public <P extends Record> Stream<P> stream(Query query, Class<P> projectionType) {
+        return Pages.stream(query, page -> findPage(page, projectionType));
+    }
+
+    /**
+     * Traverses projected pages lazily, including empty pages.
+     *
+     * @param <P> projection record type
+     * @param query initial page request
+     * @param projectionType projection class
+     * @return single-use page cursor
+     */
+    public <P extends Record> Pages.Cursor<P> pages(Query query, Class<P> projectionType) {
+        return Pages.cursor(query, page -> findPage(page, projectionType));
+    }
+
+    /**
+     * Finds one page on the configured executor.
+     *
+     * @param query page request
+     * @return asynchronous page
+     */
+    public CompletableFuture<Page<EntityRecord>> findPageAsync(Query query) {
+        return Async.submit(() -> findPage(query), executor);
+    }
+
+    /**
+     * Finds one projected page on the configured executor.
+     *
+     * @param <P> projection record type
+     * @param query page request
+     * @param projectionType projection class
+     * @return asynchronous projected page
+     */
+    public <P extends Record> CompletableFuture<Page<P>> findPageAsync(Query query, Class<P> projectionType) {
+        return Async.submit(() -> findPage(query, projectionType), executor);
+    }
+
+    /**
+     * Attempts inserts in input order. Conflicts are reported per record; other failures stop the batch. Earlier writes
+     * may remain committed if a later operation fails.
+     *
+     * @param records records to insert
+     * @return outcomes in input order
+     */
+    @Blocking
+    public List<MutationResult> insertIfAbsent(List<EntityRecord> records) {
+        return records.stream().map(this::insertIfAbsent).toList();
+    }
+
+    /**
+     * Attempts a batch of inserts on the configured executor.
+     *
+     * @param records records to insert
+     * @return outcomes in input order
+     */
+    public CompletableFuture<List<MutationResult>> insertIfAbsentAsync(List<EntityRecord> records) {
+        return Async.submit(() -> insertIfAbsent(records), executor);
+    }
+    /**
+     * Upserts corresponding identities, insert values, and mutations in input order. Each upsert is atomic; earlier
+     * writes may remain committed if a later operation fails. Enclose the call in a transaction when batch atomicity is
+     * required.
+     *
+     * @param identities identities to match
+     * @param inserts values for missing records
+     * @param updates mutations for existing records
+     * @return outcomes in input order
+     * @throws IllegalArgumentException if the lists differ in size
+     */
+    @Blocking
+    public List<MutationResult> upsert(List<Identity> identities, List<EntityRecord> inserts, List<Mutation> updates) {
+        if (identities.size() != inserts.size() || identities.size() != updates.size()) {
+            throw new IllegalArgumentException("Bulk upsert lists must have the same size");
+        }
+        var results = new ArrayList<MutationResult>(identities.size());
+        for (int index = 0; index < identities.size(); index++) {
+            results.add(upsert(identities.get(index), inserts.get(index), updates.get(index)));
+        }
+        return List.copyOf(results);
+    }
+
+    /**
+     * Upserts corresponding records on the configured executor.
+     *
+     * @param identities identities to match
+     * @param inserts values for missing records
+     * @param updates mutations for existing records
+     * @return outcomes in input order
+     */
+    public CompletableFuture<List<MutationResult>> upsertAsync(
+            List<Identity> identities, List<EntityRecord> inserts, List<Mutation> updates) {
+        return Async.submit(() -> upsert(identities, inserts, updates), executor);
     }
 }
