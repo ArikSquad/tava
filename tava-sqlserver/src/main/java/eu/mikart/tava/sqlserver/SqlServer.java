@@ -3,19 +3,39 @@ package eu.mikart.tava.sqlserver;
 import eu.mikart.tava.jdbc.JdbcAdapter;
 import eu.mikart.tava.jdbc.StandardJdbcProfile;
 import eu.mikart.tava.schema.FieldDefinition;
+import eu.mikart.tava.schema.GeneratedValue;
+import java.util.Objects;
+import javax.sql.DataSource;
 import org.intellij.lang.annotations.Pattern;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Range;
 
+/** Factory methods for Microsoft SQL Server adapters. */
 public final class SqlServer {
-    private SqlServer() {
+    private SqlServer() {}
+
+    /**
+     * Creates a SQL Server adapter using application-managed JDBC connections.
+     *
+     * @param dataSource connection pool or other JDBC data source
+     * @return adapter backed by the data source
+     * @since 1.3.0
+     */
+    public static @NotNull JdbcAdapter connect(final @NotNull DataSource dataSource) {
+        Objects.requireNonNull(dataSource, "dataSource");
+        return new JdbcAdapter(new Profile(), dataSource::getConnection);
     }
 
+    /**
+     * Creates a SQL Server adapter using a JDBC connection URL.
+     *
+     * @param url JDBC connection URL
+     * @param user database user
+     * @param password database password
+     * @return adapter that owns the opened connections
+     */
     public static @NotNull JdbcAdapter connect(
-            final @NotNull String url,
-            final @NotNull String user,
-            final @NotNull String password
-    ) {
+            final @NotNull String url, final @NotNull String user, final @NotNull String password) {
         return JdbcAdapter.driverManager(new Profile(), url, user, password);
     }
 
@@ -25,11 +45,8 @@ public final class SqlServer {
         }
 
         @Override
-        public @NotNull String quote(
-                @Pattern("[A-Za-z_][A-Za-z0-9_]*") final @NotNull String identifier
-        ) {
-            if (!validIdentifier(identifier))
-                throw new IllegalArgumentException("Invalid identifier: " + identifier);
+        public @NotNull String quote(@Pattern("[A-Za-z_][A-Za-z0-9_]*") final @NotNull String identifier) {
+            if (!validIdentifier(identifier)) throw new IllegalArgumentException("Invalid identifier: " + identifier);
             return "[" + identifier + "]";
         }
 
@@ -38,7 +55,11 @@ public final class SqlServer {
             return switch (field.type().logicalType()) {
                 case UUID -> "UNIQUEIDENTIFIER";
                 case JSON, TEXT -> "NVARCHAR(MAX)";
-                case STRING -> "NVARCHAR(" + (field.type().length() == null ? 255 : field.type().length()) + ")";
+                case STRING ->
+                    "NVARCHAR("
+                            + (field.type().length() == null
+                                    ? 255
+                                    : field.type().length()) + ")";
                 case FLOAT64 -> "FLOAT";
                 case BOOLEAN -> "BIT";
                 case BINARY -> "VARBINARY(MAX)";
@@ -49,14 +70,13 @@ public final class SqlServer {
 
         @Override
         public @NotNull String identityClause(final @NotNull FieldDefinition field) {
-            return field.generated() == eu.mikart.tava.schema.GeneratedValue.IDENTITY ? "IDENTITY(1,1)" : "";
+            return field.generated() == GeneratedValue.IDENTITY ? "IDENTITY(1,1)" : "";
         }
 
         @Override
         public @NotNull String pagination(
                 final @Range(from = 1, to = Integer.MAX_VALUE) int limit,
-                final @Range(from = 0, to = Integer.MAX_VALUE) int offset
-        ) {
+                final @Range(from = 0, to = Integer.MAX_VALUE) int offset) {
             return " OFFSET " + offset + " ROWS FETCH NEXT " + limit + " ROWS ONLY";
         }
 
@@ -67,13 +87,16 @@ public final class SqlServer {
 
         @Override
         public @NotNull String renameEntity(@NotNull String from, @NotNull String to) {
-            quote(from); quote(to);
+            quote(from);
+            quote(to);
             return "EXEC sp_rename N'" + from + "', N'" + to + "'";
         }
 
         @Override
         public @NotNull String renameField(@NotNull String entity, @NotNull String from, @NotNull String to) {
-            quote(entity); quote(from); quote(to);
+            quote(entity);
+            quote(from);
+            quote(to);
             return "EXEC sp_rename N'" + entity + "." + from + "', N'" + to + "', 'COLUMN'";
         }
     }

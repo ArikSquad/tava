@@ -9,23 +9,66 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [core, jdbc, h2, sqlite, postgres, mysql, mongodb, dynamodb, sqlserver, oracle]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-java@v6.1.0
         with:
           distribution: temurin
           java-version: "21"
-          cache: gradle
       - uses: gradle/actions/setup-gradle@v6.4.1
-      - name: Build all modules and run contract tests
-        run: ./gradlew clean check javadoc --no-daemon
-      - name: Upload test report
-        if: failure()
+      - name: Require Docker for integration tests
+        if: ${{ !contains(fromJSON('["core", "jdbc", "h2", "sqlite"]'), matrix.module) }}
+        run: docker info
+      - name: Check module
+        run: ./gradlew :tava-${{ matrix.module }}:check :tava-${{ matrix.module }}:apiCompatibility -PrequireIntegrationTests --build-cache
+      - name: Upload test results and coverage data
+        if: ${{ !cancelled() && matrix.module != 'jdbc' }}
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: test-report
-          path: "**/build/reports/tests/test"
+          name: tests-${{ matrix.module }}
+          path: |
+            tava-${{ matrix.module }}/build/reports/tests/test
+            tava-${{ matrix.module }}/build/test-results/test
+            tava-${{ matrix.module }}/build/jacoco/test.exec
+
+  coverage:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6.4.1
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: tests-*
+          path: coverage-data
+      - name: Restore adapter coverage data
+        run: |
+          for module in core h2 sqlite postgres mysql mongodb dynamodb sqlserver oracle; do
+            mkdir -p "tava-$module/build/jacoco"
+            cp "coverage-data/tests-$module/jacoco/test.exec" "tava-$module/build/jacoco/test.exec"
+          done
+      - name: Verify aggregate coverage
+        run: ./gradlew classes jacocoCoverageVerification -x test --build-cache --parallel
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: coverage
+          path: build/reports/jacoco

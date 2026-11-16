@@ -1,4 +1,4 @@
-# Tava 1.2.2
+# Tava 1.3.0
 
 Tava is a modular Java 21 database toolkit with one canonical entity model across relational,
 document, and key-value databases.
@@ -13,7 +13,7 @@ repositories {
 }
 
 dependencies {
-    implementation(platform("eu.mikart.tava:tava-bom:1.2.2"))
+    implementation(platform("eu.mikart.tava:tava-bom:1.3.0"))
     implementation("eu.mikart.tava:tava-core")
     implementation("eu.mikart.tava:tava-postgres")
     implementation("eu.mikart.tava:tava-mongodb")
@@ -35,11 +35,10 @@ record Account(
         @Generated(GeneratedValue.NOW) Instant createdAt
 ) {}
 
-Schema schema = Schema.builder().record(Account.class).build();
+Schema schema = Schema.of(Account.class);
 
 try(Tava tava = Tava.open(Postgres.connect(jdbcUrl, user, password))) {
-    SchemaPlan plan = tava.plan(schema);
-    plan.apply(); // destructive and lossy changes require explicit options
+    tava.schema().ensure(schema); // safe additive setup; use SchemaHistory for versioned migrations
 
     var accounts = tava.entity(Account.class);
     accounts.insert(new Account(UUID.randomUUID(), "ada@example.com", 7, null));

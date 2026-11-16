@@ -9,4 +9,11 @@ import java.lang.annotation.Target;
 /** Selects a custom value codec for a record component. */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.RECORD_COMPONENT)
-public @interface MappedWith { Class<? extends ValueCodec<?>> value(); }
+public @interface MappedWith {
+    /**
+     * Returns the codec class used to map the component value.
+     *
+     * @return custom value codec class, which must have an accessible no-argument constructor
+     */
+    Class<? extends ValueCodec<?>> value();
+}
