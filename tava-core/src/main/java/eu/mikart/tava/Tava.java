@@ -2,6 +2,7 @@ package eu.mikart.tava;
 
 import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
@@ -53,6 +54,27 @@ public final class Tava implements AutoCloseable {
         @Override
         protected EntityStore delegate() {
             return withLifecycle(Tava.this::currentStore);
+        }
+
+        @Override
+        public Object insertReturningKey(String entity, EntityRecord record, String keyColumn) {
+            return withStore(
+                    "insertReturningKey", entity, 1, store -> store.insertReturningKey(entity, record, keyColumn));
+        }
+
+        @Override
+        public Object upsertReturningKey(
+                String entity, Identity key, EntityRecord insert, Mutation update, String returnColumn) {
+            return withStore(
+                    "upsertReturningKey",
+                    entity,
+                    1,
+                    store -> store.upsertReturningKey(entity, key, insert, update, returnColumn));
+        }
+
+        @Override
+        public List<EntityRecord> querySql(String sql, List<?> parameters) {
+            return withStore("querySql", null, 1, store -> store.querySql(sql, parameters));
         }
 
         @Override
@@ -233,6 +255,34 @@ public final class Tava implements AutoCloseable {
      */
     public @NotNull Capabilities capabilities() {
         return withLifecycle(adapter::capabilities);
+    }
+
+    /**
+     * Runs a parameterized SQL query, including joins and grouped aggregates on JDBC adapters. Use unique aliases for
+     * result columns with overlapping names.
+     *
+     * @param sql SQL query with JDBC parameter markers
+     * @param parameters values bound in marker order
+     * @return query results
+     */
+    @Blocking
+    public List<EntityRecord> querySql(String sql, List<?> parameters) {
+        return routedStore.querySql(sql, parameters);
+    }
+
+    /**
+     * Runs a parameterized SQL query and maps result column labels to a Java record.
+     *
+     * @param <P> projection record type
+     * @param sql SQL query with JDBC parameter markers
+     * @param parameters values bound in marker order
+     * @param projection projection type
+     * @return mapped query results
+     */
+    @Blocking
+    public <P extends Record> List<P> querySql(String sql, List<?> parameters, Class<P> projection) {
+        var mapper = RecordMapper.of(projection);
+        return querySql(sql, parameters).stream().map(mapper::read).toList();
     }
 
     /**

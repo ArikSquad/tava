@@ -68,6 +68,41 @@ public interface JdbcProfile {
     String quote(@NotNull String identifier);
 
     /**
+     * Builds an insert that uses database defaults for every column.
+     *
+     * @param entity table name
+     * @param keyColumn generated key column
+     * @return insert statement
+     */
+    default String insertDefaultValues(String entity, String keyColumn) {
+        return "INSERT INTO " + quote(entity) + " DEFAULT VALUES";
+    }
+
+    /**
+     * Supplies a JDBC query form of an insert that returns the requested key directly.
+     *
+     * @param entity table name
+     * @param insertSql prepared insert statement
+     * @param keyColumn generated key column
+     * @return SQL returning the key, or {@code null} to use JDBC generated keys
+     */
+    default @Nullable String insertReturningKeySql(String entity, String insertSql, String keyColumn) {
+        return null;
+    }
+
+    /**
+     * Builds a single-column lookup that locks matching rows for an upsert.
+     *
+     * @param entity table name
+     * @param column result column
+     * @param where parameterized match expression
+     * @return locking lookup statement
+     */
+    default String upsertKeyLookup(String entity, String column, String where) {
+        return "SELECT " + quote(column) + " FROM " + quote(entity) + " WHERE " + where + " FOR UPDATE";
+    }
+
+    /**
      * Maps a logical field type to its native SQL type declaration.
      *
      * @param field field whose logical type is being mapped

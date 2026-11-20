@@ -182,6 +182,17 @@ public final class Sqlite {
         }
 
         @Override
+        public String insertReturningKeySql(String entity, String insertSql, String keyColumn) {
+            return insertSql + " RETURNING " + quote(entity) + "." + quote(keyColumn);
+        }
+
+        @Override
+        public String upsertKeyLookup(String entity, String column, String where) {
+            String table = quote(entity);
+            return "SELECT " + table + "." + quote(column) + " FROM " + table + " WHERE " + where;
+        }
+
+        @Override
         public MutationExpression collectionMutation(String field, Mutation.Operation operation) {
             String encoded = ValueCodecs.toJson(operation.value());
             return switch (operation.kind()) {

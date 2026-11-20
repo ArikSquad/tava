@@ -1,6 +1,7 @@
 package eu.mikart.tava.spi;
 
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
@@ -39,6 +40,22 @@ public abstract class ForwardingEntityStore implements EntityStore {
     @Override
     public NativeAccess nativeAccess() {
         return delegate().nativeAccess();
+    }
+
+    @Override
+    public Object insertReturningKey(String entity, EntityRecord record, String keyColumn) {
+        return delegate().insertReturningKey(entity, record, keyColumn);
+    }
+
+    @Override
+    public Object upsertReturningKey(
+            String entity, Identity key, EntityRecord insert, Mutation update, String returnColumn) {
+        return delegate().upsertReturningKey(entity, key, insert, update, returnColumn);
+    }
+
+    @Override
+    public List<EntityRecord> querySql(String sql, List<?> parameters) {
+        return delegate().querySql(sql, parameters);
     }
 
     @Override

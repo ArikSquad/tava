@@ -96,6 +96,11 @@ public final class MySql {
         }
 
         @Override
+        public String insertDefaultValues(String entity, String keyColumn) {
+            return "INSERT INTO " + quote(entity) + " () VALUES ()";
+        }
+
+        @Override
         public @NotNull String identityClause(final @NotNull FieldDefinition field) {
             return field.generated() == GeneratedValue.IDENTITY ? "AUTO_INCREMENT" : "";
         }

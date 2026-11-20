@@ -4,6 +4,7 @@ import eu.mikart.tava.TavaException.Capability;
 import eu.mikart.tava.TavaException.Conflict;
 import eu.mikart.tava.data.ConflictDetail;
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
@@ -27,6 +28,47 @@ public interface EntityStore {
      */
     @NotNull
     EntityRecord insert(@NotNull String entity, @NotNull EntityRecord record);
+
+    /**
+     * Inserts one record and returns the value generated for one column.
+     *
+     * @param entity entity name
+     * @param record record to insert, with the generated column omitted
+     * @param keyColumn name of the generated key column
+     * @return generated key
+     * @throws Capability if the adapter does not support generated key retrieval
+     */
+    default Object insertReturningKey(String entity, EntityRecord record, String keyColumn) {
+        throw new Capability("Adapter does not support insert returning a generated key");
+    }
+
+    /**
+     * Inserts or updates by a database-enforced unique key and returns one column from that row.
+     *
+     * @param entity entity name
+     * @param key values of the unique columns, also present in the insert
+     * @param insert values to insert
+     * @param update mutation applied to a matching row, leaving the match columns intact
+     * @param returnColumn name of the non-null column to return
+     * @return column value from the inserted or matched row
+     * @throws Capability if the adapter does not support returning a key from upsert
+     */
+    default Object upsertReturningKey(
+            String entity, Identity key, EntityRecord insert, Mutation update, String returnColumn) {
+        throw new Capability("Adapter does not support upsert returning a key");
+    }
+
+    /**
+     * Runs parameterized SQL that returns rows.
+     *
+     * @param sql SQL query with JDBC parameter markers and unique result column labels
+     * @param parameters values bound in marker order
+     * @return query results
+     * @throws Capability if the adapter does not support SQL queries
+     */
+    default List<EntityRecord> querySql(String sql, List<?> parameters) {
+        throw new Capability("Adapter does not support SQL queries");
+    }
 
     /**
      * Inserts records in input order.

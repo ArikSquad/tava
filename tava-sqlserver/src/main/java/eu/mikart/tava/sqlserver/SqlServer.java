@@ -80,6 +80,11 @@ public final class SqlServer {
         }
 
         @Override
+        public String upsertKeyLookup(String entity, String column, String where) {
+            return "SELECT " + quote(column) + " FROM " + quote(entity) + " WITH (UPDLOCK) WHERE " + where;
+        }
+
+        @Override
         public @NotNull String defaultPaginationOrder() {
             return " ORDER BY (SELECT NULL)";
         }

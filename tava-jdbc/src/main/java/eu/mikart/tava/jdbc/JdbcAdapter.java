@@ -5,6 +5,7 @@ import eu.mikart.tava.ValueCodecs;
 import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.data.ConflictDetail;
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
@@ -168,28 +169,32 @@ public final class JdbcAdapter implements Adapter {
         return new TransactionManager() {
             @Override
             public <R> R transaction(@NotNull Function<EntityStore, R> callback) {
-                try (Connection connection = connections.open()) {
-                    boolean autoCommit = connection.getAutoCommit();
-                    connection.setAutoCommit(false);
-                    try {
-                        R result = callback.apply(new JdbcStore(connection));
-                        connection.commit();
-                        return result;
-                    } catch (SQLException | RuntimeException | Error failure) {
-                        try {
-                            connection.rollback();
-                        } catch (SQLException rollback) {
-                            failure.addSuppressed(rollback);
-                        }
-                        throw failure;
-                    } finally {
-                        connection.setAutoCommit(autoCommit);
-                    }
-                } catch (SQLException failure) {
-                    throw data("Run transaction", failure);
-                }
+                return inTransaction(callback::apply);
             }
         };
+    }
+
+    private <R> R inTransaction(Function<JdbcStore, R> callback) {
+        try (Connection connection = connections.open()) {
+            boolean autoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try {
+                R result = callback.apply(new JdbcStore(connection));
+                connection.commit();
+                return result;
+            } catch (SQLException | RuntimeException | Error failure) {
+                try {
+                    connection.rollback();
+                } catch (SQLException rollback) {
+                    failure.addSuppressed(rollback);
+                }
+                throw failure;
+            } finally {
+                connection.setAutoCommit(autoCommit);
+            }
+        } catch (SQLException failure) {
+            throw data("Run transaction", failure);
+        }
     }
 
     @Override
@@ -226,6 +231,11 @@ public final class JdbcAdapter implements Adapter {
     @Override
     public void close() {
         closeAction.run();
+    }
+
+    @FunctionalInterface
+    private interface JdbcWrite<R> {
+        R run() throws SQLException;
     }
 
     private final class JdbcStore implements EntityStore {
@@ -346,6 +356,123 @@ public final class JdbcAdapter implements Adapter {
         }
 
         @Override
+        public Object insertReturningKey(String entity, EntityRecord record, String keyColumn) {
+            profile.quote(keyColumn);
+            if (record.values().containsKey(keyColumn))
+                throw new IllegalArgumentException("Omit the generated column from the insert: " + keyColumn);
+            List<String> fields = new ArrayList<>(record.values().keySet());
+            String sql = fields.isEmpty() ? profile.insertDefaultValues(entity, keyColumn) : insertSql(entity, fields);
+            String action = "Insert into " + entity;
+            if (transaction == null) {
+                return inTransaction(store -> {
+                    try {
+                        return store.insertGeneratedKey(
+                                entity, sql, record.values().values(), keyColumn);
+                    } catch (SQLException failure) {
+                        throw data(action, failure);
+                    }
+                });
+            }
+            return withSavepoint(
+                    action,
+                    () -> insertGeneratedKey(entity, sql, record.values().values(), keyColumn));
+        }
+
+        private Object insertGeneratedKey(String entity, String sql, Collection<?> values, String keyColumn)
+                throws SQLException {
+            String returning = profile.insertReturningKeySql(entity, sql, keyColumn);
+            if (returning != null) {
+                try (PreparedStatement statement = transaction.prepareStatement(returning)) {
+                    bind(statement, values);
+                    try (ResultSet keys = statement.executeQuery()) {
+                        if (!keys.next()) throw new SQLException("Insert did not return a generated key");
+                        return requireKey(keys, keyColumn);
+                    }
+                }
+            }
+            // Oracle interpolates the requested column into its RETURNING clause verbatim.
+            String generatedColumn = profile.name().equals("oracle") ? profile.quote(keyColumn) : keyColumn;
+            try (PreparedStatement statement = transaction.prepareStatement(sql, new String[] {generatedColumn})) {
+                bind(statement, values);
+                if (statement.executeUpdate() != 1) throw new SQLException("Expected one inserted row");
+                try (ResultSet keys = statement.getGeneratedKeys()) {
+                    if (!keys.next()) throw new SQLException("Database did not return a generated key");
+                    return requireKey(keys, keyColumn);
+                }
+            }
+        }
+
+        @Override
+        public Object upsertReturningKey(
+                String entity, Identity key, EntityRecord insert, Mutation update, String returnColumn) {
+            if (transaction == null) {
+                return retryTransaction(store -> store.upsertReturningKey(entity, key, insert, update, returnColumn));
+            }
+            key.values().forEach((field, value) -> {
+                if (!Objects.deepEquals(value, insert.get(field)))
+                    throw new IllegalArgumentException("Insert must contain the matching key value for " + field);
+                if (update.values().containsKey(field) || update.operations().containsKey(field))
+                    throw new IllegalArgumentException("Upsert cannot change the matching key column: " + field);
+            });
+            Predicate match = key.predicate();
+            List<Object> parameters = new ArrayList<>();
+            String lookup = profile.upsertKeyLookup(entity, returnColumn, predicateSql(match, parameters));
+            return withSavepoint("Upsert into " + entity, () -> {
+                if (update(entity, match, update) == 0) {
+                    try {
+                        withSavepoint("Insert into " + entity, () -> {
+                            try (PreparedStatement statement = transaction.prepareStatement(insertSql(
+                                    entity, List.copyOf(insert.values().keySet())))) {
+                                bind(statement, insert.values().values());
+                                if (statement.executeUpdate() != 1) throw new SQLException("Expected one inserted row");
+                                return null;
+                            }
+                        });
+                    } catch (TavaException.Conflict conflict) {
+                        update(entity, match, update);
+                        return lookupKey(lookup, parameters, returnColumn).orElseThrow(() -> conflict);
+                    }
+                }
+                return lookupKey(lookup, parameters, returnColumn)
+                        .orElseThrow(() -> new SQLException("Could not read the upserted row"));
+            });
+        }
+
+        private Optional<Object> lookupKey(String sql, List<?> parameters, String column) throws SQLException {
+            try (PreparedStatement statement = transaction.prepareStatement(sql)) {
+                bind(statement, parameters);
+                try (ResultSet result = statement.executeQuery()) {
+                    if (!result.next()) return Optional.empty();
+                    return Optional.of(requireKey(result, column));
+                }
+            }
+        }
+
+        private <R> R withSavepoint(String action, JdbcWrite<R> operation) {
+            try {
+                Savepoint savepoint = transaction.setSavepoint();
+                try {
+                    return operation.run();
+                } catch (SQLException | RuntimeException | Error failure) {
+                    try {
+                        transaction.rollback(savepoint);
+                    } catch (SQLException rollback) {
+                        failure.addSuppressed(rollback);
+                        throw new TavaException.Transaction("Rollback failed after " + action, failure);
+                    }
+                    throw failure;
+                } finally {
+                    try {
+                        transaction.releaseSavepoint(savepoint);
+                    } catch (SQLException ignored) {
+                    }
+                }
+            } catch (SQLException failure) {
+                throw data(action, failure);
+            }
+        }
+
+        @Override
         public @NotNull MutationResult insertResult(@NotNull String entity, @NotNull EntityRecord record) {
             if (record.values().isEmpty()) throw new IllegalArgumentException("record has no values");
             List<String> fields = new ArrayList<>(record.values().keySet());
@@ -437,6 +564,29 @@ public final class JdbcAdapter implements Adapter {
                         "Parameterized SELECT; index selection and table scans are determined by the database optimizer");
             } catch (SQLException failure) {
                 throw data("Explain " + entity, failure);
+            }
+        }
+
+        @Override
+        public List<EntityRecord> querySql(String sql, List<?> parameters) {
+            try (Lease lease = lease();
+                    PreparedStatement statement = lease.connection.prepareStatement(sql)) {
+                bind(statement, parameters);
+                try (ResultSet result = statement.executeQuery()) {
+                    ResultSetMetaData metadata = result.getMetaData();
+                    int columns = metadata.getColumnCount();
+                    Set<String> labels = new HashSet<>();
+                    for (int i = 1; i <= columns; i++) {
+                        String label = metadata.getColumnLabel(i);
+                        if (!labels.add(label))
+                            throw new IllegalArgumentException("Duplicate SQL result label: " + label);
+                    }
+                    List<EntityRecord> rows = new ArrayList<>();
+                    while (result.next()) rows.add(readRecord(result, metadata, columns));
+                    return List.copyOf(rows);
+                }
+            } catch (SQLException failure) {
+                throw data("Execute SQL query", failure);
             }
         }
 
@@ -593,18 +743,7 @@ public final class JdbcAdapter implements Adapter {
                 @NotNull EntityRecord insert,
                 @NotNull Mutation update) {
             if (transaction == null) {
-                RuntimeException last = null;
-                for (int attempt = 0; attempt < 8; attempt++) {
-                    try {
-                        return transactions().transaction(store -> store.upsert(entity, identity, insert, update));
-                    } catch (RuntimeException failure) {
-                        SQLException sql = sqlCause(failure);
-                        if (sql == null || !profile.retryableWrite(sql)) throw failure;
-                        last = failure;
-                        LockSupport.parkNanos((attempt + 1L) * 2_000_000L);
-                    }
-                }
-                throw last;
+                return retryTransaction(store -> store.upsert(entity, identity, insert, update));
             }
             long changed = update(entity, identity, update);
             if (changed > 0) return MutationResult.changed(changed, MutationResult.Outcome.UPDATED);
@@ -649,6 +788,26 @@ public final class JdbcAdapter implements Adapter {
                 }
             }
         }
+    }
+
+    private <R> R retryTransaction(Function<JdbcStore, R> operation) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return inTransaction(operation);
+            } catch (RuntimeException failure) {
+                SQLException sql = sqlCause(failure);
+                if (attempt == 8 || sql == null || !(profile.retryableWrite(sql) || "40001".equals(sql.getSQLState())))
+                    throw failure;
+                LockSupport.parkNanos(attempt * 2_000_000L);
+            }
+        }
+    }
+
+    private static Object requireKey(ResultSet result, String column) throws SQLException {
+        Object key = result.getObject(1);
+        if (key == null) throw new SQLException("Database did not return a value for " + column);
+        if (result.next()) throw new SQLException("Expected one value for " + column);
+        return key;
     }
 
     private EntityRecord readRecord(ResultSet result, ResultSetMetaData metadata, int columns) throws SQLException {
@@ -1264,7 +1423,7 @@ public final class JdbcAdapter implements Adapter {
         };
     }
 
-    private static TavaException data(String action, SQLException cause) {
+    private TavaException data(String action, SQLException cause) {
         String message = action + " failed: " + cause.getMessage();
         String state = cause.getSQLState();
         if (isConflict(cause)) return new TavaException.Conflict(message, cause);
@@ -1272,10 +1431,11 @@ public final class JdbcAdapter implements Adapter {
         return new TavaException.Data(message, cause);
     }
 
-    private static boolean isConflict(SQLException cause) {
+    private boolean isConflict(SQLException cause) {
         String state = cause.getSQLState();
         int code = cause.getErrorCode();
-        if ("23505".equals(state) || code == 1 || code == 1062 || code == 2601 || code == 2627) return true;
+        if ("23505".equals(state) || code == 1062 || code == 2601 || code == 2627) return true;
+        if (code == 1 && profile.name().equals("oracle")) return true;
         if (code != 19 || cause.getMessage() == null) return false;
         String message = cause.getMessage().toLowerCase(Locale.ROOT);
         return message.contains("unique constraint failed") || message.contains("primary key");
