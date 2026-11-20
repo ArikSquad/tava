@@ -78,9 +78,7 @@ public final class Records {
      */
     @Blocking
     public @NotNull Optional<EntityRecord> findOne(final @NotNull Predicate predicate) {
-        try (var results = stream(Query.builder().where(predicate).limit(1).build())) {
-            return results.findFirst();
-        }
+        return store.findOne(entity, predicate);
     }
 
     /**

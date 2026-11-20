@@ -6,7 +6,6 @@ import eu.mikart.tava.schema.FieldDefinition;
 import eu.mikart.tava.schema.GeneratedValue;
 import java.util.Objects;
 import javax.sql.DataSource;
-import org.intellij.lang.annotations.Pattern;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Range;
 
@@ -45,9 +44,9 @@ public final class SqlServer {
         }
 
         @Override
-        public @NotNull String quote(@Pattern("[A-Za-z_][A-Za-z0-9_]*") final @NotNull String identifier) {
+        public @NotNull String quote(final @NotNull String identifier) {
             if (!validIdentifier(identifier)) throw new IllegalArgumentException("Invalid identifier: " + identifier);
-            return "[" + identifier + "]";
+            return "[" + identifier.replace("]", "]]") + "]";
         }
 
         @Override
@@ -87,17 +86,22 @@ public final class SqlServer {
 
         @Override
         public @NotNull String renameEntity(@NotNull String from, @NotNull String to) {
-            quote(from);
-            quote(to);
-            return "EXEC sp_rename N'" + from + "', N'" + to + "'";
+            return "EXEC sp_rename " + unicodeLiteral(quote(from)) + ", " + renameTarget(to);
         }
 
         @Override
         public @NotNull String renameField(@NotNull String entity, @NotNull String from, @NotNull String to) {
-            quote(entity);
-            quote(from);
-            quote(to);
-            return "EXEC sp_rename N'" + entity + "." + from + "', N'" + to + "', 'COLUMN'";
+            return "EXEC sp_rename " + unicodeLiteral(quote(entity) + "." + quote(from)) + ", " + renameTarget(to)
+                    + ", 'COLUMN'";
+        }
+
+        private String renameTarget(String identifier) {
+            if (!validIdentifier(identifier)) throw new IllegalArgumentException("Invalid identifier: " + identifier);
+            return unicodeLiteral(identifier);
+        }
+
+        private String unicodeLiteral(String value) {
+            return "N'" + value.replace("'", "''") + "'";
         }
     }
 }

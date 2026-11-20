@@ -12,6 +12,7 @@ import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.QueryDiagnostics;
 import java.util.List;
+import java.util.Optional;
 import org.jetbrains.annotations.NotNull;
 
 /** Executes entity reads and writes for an adapter. */
@@ -53,6 +54,31 @@ public interface EntityStore {
      */
     @NotNull
     Page<EntityRecord> find(@NotNull String entity, @NotNull Query query);
+
+    /**
+     * Finds one matching record, if any.
+     *
+     * @param entity entity name
+     * @param predicate matching condition
+     * @return a matching record
+     * @since 1.3.2
+     */
+    default Optional<EntityRecord> findOne(String entity, Predicate predicate) {
+        try (var stream =
+                Pages.stream(Query.builder().where(predicate).limit(1).build(), query -> find(entity, query))) {
+            return stream.findFirst();
+        }
+    }
+
+    /**
+     * Exposes scoped native handles from a transaction store.
+     *
+     * @return native access for the active transaction
+     * @since 1.3.2
+     */
+    default NativeAccess nativeAccess() {
+        throw new Capability("Native access is unavailable inside a transaction");
+    }
 
     /**
      * Counts matching records. Adapters should override this fallback with server-side counting.

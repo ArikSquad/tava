@@ -1,5 +1,6 @@
 package eu.mikart.tava.spi;
 
+import eu.mikart.tava.TavaException;
 import java.util.Objects;
 import java.util.function.Function;
 import org.jetbrains.annotations.NotNull;
@@ -7,6 +8,49 @@ import org.jetbrains.annotations.Nullable;
 
 /** Exposes an adapter's underlying driver handles to adapter-specific code. */
 public interface NativeAccess {
+    /**
+     * Callback that may fail with a checked driver exception.
+     *
+     * @param <T> native handle type
+     * @param <R> callback result type
+     * @since 1.3.2
+     */
+    @FunctionalInterface
+    interface CheckedCallback<T, R> {
+        /**
+         * Runs against the scoped handle.
+         *
+         * @param handle native handle
+         * @return callback result
+         * @throws Exception if the operation fails with a checked exception
+         */
+        R apply(T handle) throws Exception;
+    }
+
+    /**
+     * Runs a callback that can throw checked exceptions using the same handle scope as {@link #withNative}.
+     *
+     * @param <T> native handle type
+     * @param <R> callback result type
+     * @param type class token for the requested handle
+     * @param callback action to run with the handle
+     * @return result returned by the callback, possibly {@code null}
+     * @throws TavaException.Data if the callback throws a checked exception
+     * @since 1.3.2
+     */
+    default <T, R> @Nullable R withNativeChecked(Class<T> type, CheckedCallback<T, R> callback) {
+        Objects.requireNonNull(callback, "callback");
+        return withNative(type, handle -> {
+            try {
+                return callback.apply(handle);
+            } catch (RuntimeException failure) {
+                throw failure;
+            } catch (Exception failure) {
+                throw new TavaException.Data("Use native handle", failure);
+            }
+        });
+    }
+
     /**
      * Returns a native driver handle of the requested type.
      *

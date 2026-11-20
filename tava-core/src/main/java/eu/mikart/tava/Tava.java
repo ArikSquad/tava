@@ -21,6 +21,7 @@ import eu.mikart.tava.spi.SchemaManager;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -52,6 +53,11 @@ public final class Tava implements AutoCloseable {
         @Override
         protected EntityStore delegate() {
             return withLifecycle(Tava.this::currentStore);
+        }
+
+        @Override
+        public Optional<EntityRecord> findOne(String entity, Predicate predicate) {
+            return withStore("find", entity, 1, store -> store.findOne(entity, predicate));
         }
 
         @Override
@@ -366,6 +372,11 @@ public final class Tava implements AutoCloseable {
         }
 
         @Override
+        public Optional<EntityRecord> findOne(String entity, Predicate predicate) {
+            return delegate().findOne(entity, predicate);
+        }
+
+        @Override
         protected EntityStore delegate() {
             if (!active || Thread.currentThread() != owner)
                 throw new IllegalStateException("Transaction handle is no longer active on its owning thread");
@@ -436,7 +447,7 @@ public final class Tava implements AutoCloseable {
                 }));
     }
 
-    private record TransactionAdapter(Adapter delegate, EntityStore store) implements Adapter {
+    private record TransactionAdapter(Adapter delegate, ScopedStore store) implements Adapter {
         public String name() {
             return delegate.name();
         }
@@ -454,7 +465,7 @@ public final class Tava implements AutoCloseable {
         }
 
         public NativeAccess nativeAccess() {
-            throw new TavaException.Capability("Native access is unavailable inside a transaction");
+            return store.nativeAccess();
         }
 
         public void close() {}
@@ -463,22 +474,30 @@ public final class Tava implements AutoCloseable {
     /**
      * Returns access to the adapter's native driver API.
      *
+     * <p>Inside a JDBC transaction, use a native callback on the transaction's owning thread. The callback borrows the
+     * transaction connection and must leave closing, committing, and rolling back to Tava.
+     *
      * @return native access facade
      */
     public @NotNull NativeAccess nativeAccess() {
-        if (transactionStore.get() != null)
-            throw new TavaException.Capability("Native access is unavailable inside a transaction");
-        NativeAccess nativeAccess = withLifecycle(adapter::nativeAccess);
+        EntityStore scope =
+                adapter instanceof TransactionAdapter transaction ? transaction.store() : transactionStore.get();
+        NativeAccess access = withLifecycle(() -> scope == null ? adapter.nativeAccess() : scope.nativeAccess());
         return new NativeAccess() {
+            private NativeAccess access() {
+                EntityStore active = scope == null ? transactionStore.get() : scope;
+                return active == null ? access : active.nativeAccess();
+            }
+
             @Override
             @SuppressWarnings("deprecation")
             public <T> T nativeHandle(Class<T> type) {
-                return withLifecycle(() -> nativeAccess.nativeHandle(type));
+                return withLifecycle(() -> access().nativeHandle(type));
             }
 
             @Override
             public <T, R> @Nullable R withNative(Class<T> type, Function<T, R> callback) {
-                return withLifecycle(() -> nativeAccess.withNative(type, callback));
+                return withLifecycle(() -> access().withNative(type, callback));
             }
         };
     }

@@ -9,7 +9,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
-import org.intellij.lang.annotations.Pattern;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Range;
@@ -66,7 +65,7 @@ public interface JdbcProfile {
      * @return dialect-quoted identifier
      */
     @NotNull
-    String quote(@Pattern("[A-Za-z_][A-Za-z0-9_]*") @NotNull String identifier);
+    String quote(@NotNull String identifier);
 
     /**
      * Maps a logical field type to its native SQL type declaration.

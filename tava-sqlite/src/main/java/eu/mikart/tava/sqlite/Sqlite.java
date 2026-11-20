@@ -14,12 +14,27 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Objects;
+import javax.sql.DataSource;
 import org.jetbrains.annotations.NotNull;
 
 /** Creates SQLite JDBC adapters and database backups. */
 public final class Sqlite {
 
     private Sqlite() {}
+
+    /**
+     * Creates an adapter backed by an externally managed SQLite data source. Configure connection PRAGMAs on the data
+     * source or pool.
+     *
+     * @param dataSource source of SQLite connections
+     * @return adapter that returns each connection to the data source after use
+     * @since 1.3.2
+     */
+    public static @NotNull JdbcAdapter connect(final @NotNull DataSource dataSource) {
+        Objects.requireNonNull(dataSource, "dataSource");
+        return new JdbcAdapter(new Profile(), dataSource::getConnection);
+    }
 
     /**
      * Creates an adapter for a SQLite database file using default connection options.

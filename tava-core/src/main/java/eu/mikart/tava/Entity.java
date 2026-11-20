@@ -81,13 +81,12 @@ public final class Entity<T extends Record> {
      * Finds at most one record matching a predicate.
      *
      * @param predicate condition to match
-     * @return the first matching record, or empty if none matches
+     * @return a matching record, or empty if none matches
      */
     @Blocking
     public @NotNull Optional<T> findOne(final @NotNull Predicate predicate) {
-        try (var results = stream(Query.builder().where(predicate).limit(1).build())) {
-            return results.findFirst();
-        }
+        return store.findOne(name, mapper.write(predicate == null ? Predicate.all() : predicate))
+                .map(mapper::read);
     }
 
     /**

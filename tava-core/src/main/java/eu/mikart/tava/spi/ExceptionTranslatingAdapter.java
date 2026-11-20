@@ -14,6 +14,7 @@ import eu.mikart.tava.schema.plan.ApplyOptions;
 import eu.mikart.tava.schema.plan.SchemaPlan;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -50,6 +51,14 @@ public final class ExceptionTranslatingAdapter implements Adapter {
 
     private EntityStore store(EntityStore store) {
         return new EntityStore() {
+            public Optional<EntityRecord> findOne(String entity, Predicate predicate) {
+                return call(() -> store.findOne(entity, predicate));
+            }
+
+            public NativeAccess nativeAccess() {
+                return store.nativeAccess();
+            }
+
             public long count(String entity, Predicate predicate) {
                 return call(() -> store.count(entity, predicate));
             }

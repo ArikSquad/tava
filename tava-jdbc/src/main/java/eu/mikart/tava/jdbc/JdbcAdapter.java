@@ -56,6 +56,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -174,7 +175,7 @@ public final class JdbcAdapter implements Adapter {
                         R result = callback.apply(new JdbcStore(connection));
                         connection.commit();
                         return result;
-                    } catch (RuntimeException | Error failure) {
+                    } catch (SQLException | RuntimeException | Error failure) {
                         try {
                             connection.rollback();
                         } catch (SQLException rollback) {
@@ -193,10 +194,16 @@ public final class JdbcAdapter implements Adapter {
 
     @Override
     public @NotNull NativeAccess nativeAccess() {
+        return nativeAccess(store);
+    }
+
+    private NativeAccess nativeAccess(JdbcStore store) {
         return new NativeAccess() {
             @Override
             @SuppressWarnings("deprecation")
             public <T> @NotNull T nativeHandle(final @NotNull Class<T> type) {
+                if (store.transaction != null)
+                    throw new TavaException.Capability("Use a native callback to access the transaction connection");
                 if (type != Connection.class) throw new IllegalArgumentException("JDBC adapter exposes Connection");
                 try {
                     return type.cast(connections.open());
@@ -206,9 +213,9 @@ public final class JdbcAdapter implements Adapter {
             }
 
             @Override
-            public <T, R> @NotNull R withNative(final @NotNull Class<T> type, final @NotNull Function<T, R> callback) {
-                try (final Connection connection = connections.open()) {
-                    return callback.apply(type.cast(connection));
+            public <T, R> @Nullable R withNative(final @NotNull Class<T> type, final @NotNull Function<T, R> callback) {
+                try (Lease lease = store.lease()) {
+                    return callback.apply(type.cast(lease.connection));
                 } catch (SQLException failure) {
                     throw data("Use native connection", failure);
                 }
@@ -234,6 +241,11 @@ public final class JdbcAdapter implements Adapter {
 
         private Lease lease() throws SQLException {
             return transaction == null ? new Lease(connections.open(), true) : new Lease(transaction, false);
+        }
+
+        @Override
+        public NativeAccess nativeAccess() {
+            return JdbcAdapter.this.nativeAccess(this);
         }
 
         @Override
@@ -429,6 +441,25 @@ public final class JdbcAdapter implements Adapter {
         }
 
         @Override
+        public Optional<EntityRecord> findOne(String entity, Predicate predicate) {
+            List<Object> parameters = new ArrayList<>();
+            StringBuilder sql = new StringBuilder("SELECT * FROM ").append(profile.quote(entity));
+            appendWhere(sql, parameters, predicate);
+            sql.append(profile.defaultPaginationOrder()).append(profile.pagination(1, 0));
+            try (Lease lease = lease();
+                    PreparedStatement statement = lease.connection.prepareStatement(sql.toString())) {
+                bind(statement, parameters);
+                try (ResultSet result = statement.executeQuery()) {
+                    if (!result.next()) return Optional.empty();
+                    ResultSetMetaData metadata = result.getMetaData();
+                    return Optional.of(readRecord(result, metadata, metadata.getColumnCount()));
+                }
+            } catch (SQLException failure) {
+                throw data("Query " + entity, failure);
+            }
+        }
+
+        @Override
         public @NotNull Page<EntityRecord> find(@NotNull String entity, @NotNull Query query) {
             try (Lease lease = lease()) {
                 Connection connection = lease.connection;
@@ -488,10 +519,7 @@ public final class JdbcAdapter implements Adapter {
                         List<EntityRecord> records = new ArrayList<>(Math.min(requested, 1023) + 1);
                         List<List<Object>> positions = new ArrayList<>(Math.min(requested, 1023) + 1);
                         while (rs.next()) {
-                            Map<String, Object> values = new LinkedHashMap<>(visible);
-                            for (int i = 1; i <= visible; i++)
-                                values.put(metadata.getColumnLabel(i), readValue(rs, metadata, i));
-                            records.add(EntityRecord.of(values));
+                            records.add(readRecord(rs, metadata, visible));
                             List<Object> position = new ArrayList<>(order.size());
                             for (int i = 1; i <= order.size(); i++) position.add(readValue(rs, metadata, visible + i));
                             positions.add(position);
@@ -621,6 +649,12 @@ public final class JdbcAdapter implements Adapter {
                 }
             }
         }
+    }
+
+    private EntityRecord readRecord(ResultSet result, ResultSetMetaData metadata, int columns) throws SQLException {
+        Map<String, Object> values = new LinkedHashMap<>(columns);
+        for (int i = 1; i <= columns; i++) values.put(metadata.getColumnLabel(i), readValue(result, metadata, i));
+        return EntityRecord.of(values);
     }
 
     private Object readValue(ResultSet result, ResultSetMetaData metadata, int index) throws SQLException {

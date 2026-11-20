@@ -10,7 +10,8 @@ import eu.mikart.tava.query.QueryDiagnostics;
 import java.util.List;
 
 /**
- * Forwards every operation, including adapter-specific result and batch behavior.
+ * Forwards entity operations, including adapter-specific result and batch behavior. The default single-record lookup
+ * uses this store's {@link #find} so overrides also apply to those lookups.
  *
  * @since 1.3.0
  */
@@ -35,6 +36,11 @@ public abstract class ForwardingEntityStore implements EntityStore {
      *
      * @since 1.3.0
      */
+    @Override
+    public NativeAccess nativeAccess() {
+        return delegate().nativeAccess();
+    }
+
     @Override
     public long count(String entity, Predicate predicate) {
         return delegate().count(entity, predicate);
