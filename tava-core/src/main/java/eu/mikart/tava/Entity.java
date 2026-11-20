@@ -53,6 +53,40 @@ public final class Entity<T extends Record> {
     }
 
     /**
+     * Inserts a record and returns the value of a single database-generated key column. The JDBC driver may support
+     * only the table's auto-increment or identity column.
+     *
+     * @param <K> key type
+     * @param record record to insert, with the generated field omitted by its mapping
+     * @param keyColumn mapped name of the generated column
+     * @param keyType boxed type of the returned key
+     * @return generated key
+     */
+    @Blocking
+    public <K> K insertReturningKey(T record, String keyColumn, Class<K> keyType) {
+        var readKey = mapper.keyReader(keyColumn, keyType);
+        return readKey.apply(store.insertReturningKey(name, mapper.write(record), keyColumn));
+    }
+
+    /**
+     * Upserts by a database-enforced unique key and returns one non-null column from the affected row.
+     *
+     * @param <K> returned key type
+     * @param key unique values that must also be present in the insert
+     * @param insert record to insert
+     * @param update changes for a match, leaving the match columns intact
+     * @param returnColumn mapped name of the column to return
+     * @param keyType boxed type of the returned key
+     * @return column value from the inserted or matched row
+     */
+    @Blocking
+    public <K> K upsertReturningKey(Identity key, T insert, Mutation update, String returnColumn, Class<K> keyType) {
+        var readKey = mapper.keyReader(returnColumn, keyType);
+        return readKey.apply(store.upsertReturningKey(
+                name, mapper.write(key), mapper.write(insert), mapper.write(update), returnColumn));
+    }
+
+    /**
      * Inserts a batch of records and returns the stored records in input order.
      *
      * @param records records to insert
@@ -81,13 +115,12 @@ public final class Entity<T extends Record> {
      * Finds at most one record matching a predicate.
      *
      * @param predicate condition to match
-     * @return the first matching record, or empty if none matches
+     * @return a matching record, or empty if none matches
      */
     @Blocking
     public @NotNull Optional<T> findOne(final @NotNull Predicate predicate) {
-        try (var results = stream(Query.builder().where(predicate).limit(1).build())) {
-            return results.findFirst();
-        }
+        return store.findOne(name, mapper.write(predicate == null ? Predicate.all() : predicate))
+                .map(mapper::read);
     }
 
     /**

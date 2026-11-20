@@ -48,6 +48,33 @@ public final class Records {
     }
 
     /**
+     * Inserts a record and returns the value of a single database-generated key column. The JDBC driver may support
+     * only the table's auto-increment or identity column.
+     *
+     * @param record values to insert, with the generated column omitted
+     * @param keyColumn name of the generated key column
+     * @return generated key as read from the database
+     */
+    @Blocking
+    public Object insertReturningKey(EntityRecord record, String keyColumn) {
+        return store.insertReturningKey(entity, record, keyColumn);
+    }
+
+    /**
+     * Upserts by a database-enforced unique key and returns one non-null column from the affected row.
+     *
+     * @param key unique values that must also be present in the insert
+     * @param insert values to insert
+     * @param update changes for a match, leaving the match columns intact
+     * @param returnColumn name of the column to return
+     * @return column value as read from the database
+     */
+    @Blocking
+    public Object upsertReturningKey(Identity key, EntityRecord insert, Mutation update, String returnColumn) {
+        return store.upsertReturningKey(entity, key, insert, update, returnColumn);
+    }
+
+    /**
      * Inserts a batch of records.
      *
      * @param records records to insert
@@ -78,9 +105,7 @@ public final class Records {
      */
     @Blocking
     public @NotNull Optional<EntityRecord> findOne(final @NotNull Predicate predicate) {
-        try (var results = stream(Query.builder().where(predicate).limit(1).build())) {
-            return results.findFirst();
-        }
+        return store.findOne(entity, predicate);
     }
 
     /**

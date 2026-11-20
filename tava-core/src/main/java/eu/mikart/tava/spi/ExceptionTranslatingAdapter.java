@@ -2,6 +2,7 @@ package eu.mikart.tava.spi;
 
 import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
@@ -14,6 +15,7 @@ import eu.mikart.tava.schema.plan.ApplyOptions;
 import eu.mikart.tava.schema.plan.SchemaPlan;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -50,6 +52,30 @@ public final class ExceptionTranslatingAdapter implements Adapter {
 
     private EntityStore store(EntityStore store) {
         return new EntityStore() {
+            public Optional<EntityRecord> findOne(String entity, Predicate predicate) {
+                return call(() -> store.findOne(entity, predicate));
+            }
+
+            public NativeAccess nativeAccess() {
+                return store.nativeAccess();
+            }
+
+            @Override
+            public Object insertReturningKey(String entity, EntityRecord record, String keyColumn) {
+                return call(() -> store.insertReturningKey(entity, record, keyColumn));
+            }
+
+            @Override
+            public Object upsertReturningKey(
+                    String entity, Identity key, EntityRecord insert, Mutation update, String returnColumn) {
+                return call(() -> store.upsertReturningKey(entity, key, insert, update, returnColumn));
+            }
+
+            @Override
+            public List<EntityRecord> querySql(String sql, List<?> parameters) {
+                return call(() -> store.querySql(sql, parameters));
+            }
+
             public long count(String entity, Predicate predicate) {
                 return call(() -> store.count(entity, predicate));
             }

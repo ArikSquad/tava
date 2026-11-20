@@ -4,6 +4,7 @@ import eu.mikart.tava.TavaException.Capability;
 import eu.mikart.tava.TavaException.Conflict;
 import eu.mikart.tava.data.ConflictDetail;
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
@@ -12,6 +13,7 @@ import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.QueryDiagnostics;
 import java.util.List;
+import java.util.Optional;
 import org.jetbrains.annotations.NotNull;
 
 /** Executes entity reads and writes for an adapter. */
@@ -26,6 +28,47 @@ public interface EntityStore {
      */
     @NotNull
     EntityRecord insert(@NotNull String entity, @NotNull EntityRecord record);
+
+    /**
+     * Inserts one record and returns the value generated for one column.
+     *
+     * @param entity entity name
+     * @param record record to insert, with the generated column omitted
+     * @param keyColumn name of the generated key column
+     * @return generated key
+     * @throws Capability if the adapter does not support generated key retrieval
+     */
+    default Object insertReturningKey(String entity, EntityRecord record, String keyColumn) {
+        throw new Capability("Adapter does not support insert returning a generated key");
+    }
+
+    /**
+     * Inserts or updates by a database-enforced unique key and returns one column from that row.
+     *
+     * @param entity entity name
+     * @param key values of the unique columns, also present in the insert
+     * @param insert values to insert
+     * @param update mutation applied to a matching row, leaving the match columns intact
+     * @param returnColumn name of the non-null column to return
+     * @return column value from the inserted or matched row
+     * @throws Capability if the adapter does not support returning a key from upsert
+     */
+    default Object upsertReturningKey(
+            String entity, Identity key, EntityRecord insert, Mutation update, String returnColumn) {
+        throw new Capability("Adapter does not support upsert returning a key");
+    }
+
+    /**
+     * Runs parameterized SQL that returns rows.
+     *
+     * @param sql SQL query with JDBC parameter markers and unique result column labels
+     * @param parameters values bound in marker order
+     * @return query results
+     * @throws Capability if the adapter does not support SQL queries
+     */
+    default List<EntityRecord> querySql(String sql, List<?> parameters) {
+        throw new Capability("Adapter does not support SQL queries");
+    }
 
     /**
      * Inserts records in input order.
@@ -53,6 +96,31 @@ public interface EntityStore {
      */
     @NotNull
     Page<EntityRecord> find(@NotNull String entity, @NotNull Query query);
+
+    /**
+     * Finds one matching record, if any.
+     *
+     * @param entity entity name
+     * @param predicate matching condition
+     * @return a matching record
+     * @since 1.3.2
+     */
+    default Optional<EntityRecord> findOne(String entity, Predicate predicate) {
+        try (var stream =
+                Pages.stream(Query.builder().where(predicate).limit(1).build(), query -> find(entity, query))) {
+            return stream.findFirst();
+        }
+    }
+
+    /**
+     * Exposes scoped native handles from a transaction store.
+     *
+     * @return native access for the active transaction
+     * @since 1.3.2
+     */
+    default NativeAccess nativeAccess() {
+        throw new Capability("Native access is unavailable inside a transaction");
+    }
 
     /**
      * Counts matching records. Adapters should override this fallback with server-side counting.

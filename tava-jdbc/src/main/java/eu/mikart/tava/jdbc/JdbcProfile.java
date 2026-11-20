@@ -9,7 +9,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
-import org.intellij.lang.annotations.Pattern;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Range;
@@ -66,7 +65,42 @@ public interface JdbcProfile {
      * @return dialect-quoted identifier
      */
     @NotNull
-    String quote(@Pattern("[A-Za-z_][A-Za-z0-9_]*") @NotNull String identifier);
+    String quote(@NotNull String identifier);
+
+    /**
+     * Builds an insert that uses database defaults for every column.
+     *
+     * @param entity table name
+     * @param keyColumn generated key column
+     * @return insert statement
+     */
+    default String insertDefaultValues(String entity, String keyColumn) {
+        return "INSERT INTO " + quote(entity) + " DEFAULT VALUES";
+    }
+
+    /**
+     * Supplies a JDBC query form of an insert that returns the requested key directly.
+     *
+     * @param entity table name
+     * @param insertSql prepared insert statement
+     * @param keyColumn generated key column
+     * @return SQL returning the key, or {@code null} to use JDBC generated keys
+     */
+    default @Nullable String insertReturningKeySql(String entity, String insertSql, String keyColumn) {
+        return null;
+    }
+
+    /**
+     * Builds a single-column lookup that locks matching rows for an upsert.
+     *
+     * @param entity table name
+     * @param column result column
+     * @param where parameterized match expression
+     * @return locking lookup statement
+     */
+    default String upsertKeyLookup(String entity, String column, String where) {
+        return "SELECT " + quote(column) + " FROM " + quote(entity) + " WHERE " + where + " FOR UPDATE";
+    }
 
     /**
      * Maps a logical field type to its native SQL type declaration.

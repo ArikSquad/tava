@@ -4,7 +4,6 @@ import eu.mikart.tava.capability.Capabilities;
 import eu.mikart.tava.capability.Feature;
 import eu.mikart.tava.capability.SupportLevel;
 import eu.mikart.tava.schema.FieldDefinition;
-import org.intellij.lang.annotations.Pattern;
 import org.jetbrains.annotations.NotNull;
 
 /** Basic JDBC dialect profile configured by adapter modules. */
@@ -32,29 +31,20 @@ public class StandardJdbcProfile implements JdbcProfile {
     }
 
     @Override
-    public @NotNull String quote(@Pattern("[A-Za-z_][A-Za-z0-9_]*") final @NotNull String identifier) {
+    public @NotNull String quote(final @NotNull String identifier) {
         if (!validIdentifier(identifier)) throw new IllegalArgumentException("Invalid identifier: " + identifier);
-        return quote + identifier + quote;
+        String delimiter = String.valueOf(quote);
+        return quote + identifier.replace(delimiter, delimiter + delimiter) + quote;
     }
 
     /**
-     * Checks whether an identifier uses the portable unquoted identifier syntax.
+     * Checks whether an identifier uses the supported quoted identifier syntax.
      *
      * @param identifier identifier to validate
-     * @return {@code true} when the identifier is non-empty and contains only letters, digits, and underscores
+     * @return {@code true} when the identifier is non-empty and contains no NUL character
      */
     protected static boolean validIdentifier(final String identifier) {
-        if (identifier == null || identifier.isEmpty()) return false;
-        final char first = identifier.charAt(0);
-        if (!((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') || first == '_')) return false;
-        for (int i = 1; i < identifier.length(); i++) {
-            final char value = identifier.charAt(i);
-            if (!((value >= 'A' && value <= 'Z')
-                    || (value >= 'a' && value <= 'z')
-                    || (value >= '0' && value <= '9')
-                    || value == '_')) return false;
-        }
-        return true;
+        return identifier != null && !identifier.isEmpty() && identifier.indexOf(0) < 0;
     }
 
     /** @return SQL type corresponding to the field's logical type */

@@ -52,6 +52,11 @@ public final class Oracle {
         }
 
         @Override
+        public String insertDefaultValues(String entity, String keyColumn) {
+            return "INSERT INTO " + quote(entity) + " (" + quote(keyColumn) + ") VALUES (DEFAULT)";
+        }
+
+        @Override
         public @NotNull String type(final @NotNull FieldDefinition field) {
             return switch (field.type().logicalType()) {
                 case UUID -> "VARCHAR2(36)";

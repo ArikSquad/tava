@@ -1,6 +1,7 @@
 package eu.mikart.tava.spi;
 
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
 import eu.mikart.tava.query.Mutation;
@@ -10,7 +11,8 @@ import eu.mikart.tava.query.QueryDiagnostics;
 import java.util.List;
 
 /**
- * Forwards every operation, including adapter-specific result and batch behavior.
+ * Forwards entity operations, including adapter-specific result and batch behavior. The default single-record lookup
+ * uses this store's {@link #find} so overrides also apply to those lookups.
  *
  * @since 1.3.0
  */
@@ -35,6 +37,27 @@ public abstract class ForwardingEntityStore implements EntityStore {
      *
      * @since 1.3.0
      */
+    @Override
+    public NativeAccess nativeAccess() {
+        return delegate().nativeAccess();
+    }
+
+    @Override
+    public Object insertReturningKey(String entity, EntityRecord record, String keyColumn) {
+        return delegate().insertReturningKey(entity, record, keyColumn);
+    }
+
+    @Override
+    public Object upsertReturningKey(
+            String entity, Identity key, EntityRecord insert, Mutation update, String returnColumn) {
+        return delegate().upsertReturningKey(entity, key, insert, update, returnColumn);
+    }
+
+    @Override
+    public List<EntityRecord> querySql(String sql, List<?> parameters) {
+        return delegate().querySql(sql, parameters);
+    }
+
     @Override
     public long count(String entity, Predicate predicate) {
         return delegate().count(entity, predicate);

@@ -10,6 +10,7 @@ import eu.mikart.tava.schema.annotation.Field;
 import eu.mikart.tava.schema.annotation.Generated;
 import eu.mikart.tava.schema.annotation.Identity;
 import eu.mikart.tava.schema.annotation.MappedWith;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
@@ -33,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -165,6 +167,24 @@ final class RecordMapper<T extends Record> {
             encoded = encode(component, comparison.value());
         }
         return new Predicate.Comparison(comparison.field(), comparison.operator(), encoded);
+    }
+
+    eu.mikart.tava.data.Identity write(eu.mikart.tava.data.Identity key) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        key.values().forEach((field, value) -> {
+            Component component = metadata.byName.get(field);
+            values.put(field, component == null ? value : encode(component, value));
+        });
+        return eu.mikart.tava.data.Identity.of(values);
+    }
+
+    <K> Function<Object, K> keyReader(String field, Class<K> keyType) {
+        Component component = metadata.byName.get(field);
+        if (component == null) throw new IllegalArgumentException("Unknown record field: " + field);
+        Class<?> boxedType = MethodType.methodType(component.type).wrap().returnType();
+        if (!keyType.isAssignableFrom(boxedType))
+            throw new IllegalArgumentException("Expected a key type compatible with " + boxedType.getName());
+        return value -> keyType.cast(decode(component, value));
     }
 
     @NotNull
