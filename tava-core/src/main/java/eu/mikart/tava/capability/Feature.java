@@ -14,6 +14,8 @@ public enum Feature {
     TRANSACTIONS,
     /** Supports writes conditional on record state. */
     CONDITIONAL_WRITES,
+    /** Atomically increments a counter and returns its new value. */
+    INCREMENT_RETURNING,
     /** Sorts query results. */
     SORTING,
     /** Reads results in pages. */

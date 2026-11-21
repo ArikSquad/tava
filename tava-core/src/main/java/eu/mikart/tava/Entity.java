@@ -1,13 +1,18 @@
 package eu.mikart.tava;
 
+import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
+import eu.mikart.tava.query.Aggregation;
+import eu.mikart.tava.query.FieldRef;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Pages;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.QueryDiagnostics;
+import eu.mikart.tava.query.TypedMutation;
+import eu.mikart.tava.query.TypedQuery;
 import eu.mikart.tava.schema.FieldDefinition;
 import eu.mikart.tava.schema.RecordSchemas;
 import eu.mikart.tava.spi.EntityStore;
@@ -29,6 +34,134 @@ public final class Entity<T extends Record> {
     private final EntityStore store;
     private final RecordMapper<T> mapper;
     private final Executor executor;
+
+    /**
+     * Increments a counter atomically and returns the value from that write.
+     *
+     * @param <N> numeric field type
+     * @param key identity protected by a unique constraint
+     * @param field counter field
+     * @param amount amount to add
+     * @param create whether to insert a missing row with just the identity and counter
+     * @return new value, or empty if the row is missing and creation is disabled
+     */
+    @Blocking
+    public <N extends Number> Optional<N> incrementReturning(
+            Identity key, FieldRef<T, N> field, N amount, boolean create) {
+        var decode = mapper.keyReader(field.name(), field.type());
+        return store.incrementReturning(name, mapper.write(key), field.name(), amount, create)
+                .map(decode);
+    }
+
+    /**
+     * Computes grouped results using this entity's predicate value mappings.
+     *
+     * @param aggregation grouping and metric request
+     * @return group keys and computed metrics
+     */
+    @Blocking
+    public List<EntityRecord> aggregate(Aggregation aggregation) {
+        return store.aggregate(name, aggregation.withPredicate(mapper.write(aggregation.predicate())));
+    }
+
+    /**
+     * Creates a mutation builder bound to this record type.
+     *
+     * @return typed mutation builder
+     */
+    public TypedMutation.Builder<T> mutation() {
+        return TypedMutation.builder(mapper.type());
+    }
+
+    /**
+     * Updates records matching a typed filter.
+     *
+     * @param filter condition selecting records
+     * @param mutation changes to apply
+     * @return number of updated records
+     */
+    @Blocking
+    public long update(TypedQuery.Filter<T> filter, TypedMutation<T> mutation) {
+        return update(filter.predicate(), mutation.untyped());
+    }
+
+    /**
+     * Applies a typed mutation to the record with the given identity.
+     *
+     * @param id record identity
+     * @param mutation changes to apply
+     * @return update outcome
+     */
+    @Blocking
+    public MutationResult updateById(Object id, TypedMutation<T> mutation) {
+        return updateById(id, mutation.untyped());
+    }
+
+    /**
+     * Applies a typed mutation to the record with the given identity.
+     *
+     * @param id record identity
+     * @param mutation changes to apply
+     * @return update outcome
+     */
+    @Blocking
+    public MutationResult updateById(Identity id, TypedMutation<T> mutation) {
+        return updateById(id, mutation.untyped());
+    }
+
+    /**
+     * Creates a query builder bound to this record type.
+     *
+     * @return typed query builder
+     */
+    public TypedQuery.Builder<T> query() {
+        return TypedQuery.builder(mapper.type());
+    }
+
+    /**
+     * Reads one page for a typed query.
+     *
+     * @param query page request
+     * @return page of matching records
+     */
+    @Blocking
+    public Page<T> find(TypedQuery<T> query) {
+        return find(query.untyped());
+    }
+
+    /**
+     * Reads one projected page for a typed query.
+     *
+     * @param <P> projection record type
+     * @param query page request
+     * @param projectionType class of the projected record
+     * @return page of projected records
+     */
+    @Blocking
+    public <P extends Record> Page<P> find(TypedQuery<T> query, Class<P> projectionType) {
+        return find(query.untyped(), projectionType);
+    }
+
+    /**
+     * Reads one record matching a typed filter.
+     *
+     * @param filter condition selecting records
+     * @return matching record, if present
+     */
+    @Blocking
+    public Optional<T> findFirst(TypedQuery.Filter<T> filter) {
+        return findOne(filter.predicate());
+    }
+
+    /**
+     * Lazily follows a typed query across pages.
+     *
+     * @param query initial page request
+     * @return sequential stream of records
+     */
+    public Stream<T> stream(TypedQuery<T> query) {
+        return stream(query.untyped());
+    }
 
     Entity(
             final @NotNull String name,
@@ -107,7 +240,7 @@ public final class Entity<T extends Record> {
      */
     @Blocking
     public @NotNull Page<T> find(final @NotNull Query query) {
-        final var page = store.find(name, mapper.write(query));
+        final var page = store.find(name, mapper.write(query), mapper.type());
         return new Page<>(page.items().stream().map(mapper::read).toList(), page.nextCursor());
     }
 
@@ -385,7 +518,7 @@ public final class Entity<T extends Record> {
                 .map(FieldDefinition::name)
                 .toList();
         Query selected = new Query(query.predicate(), fields, query.sorting(), query.limit(), query.cursor());
-        var page = store.find(name, mapper.write(selected));
+        var page = store.find(name, mapper.write(selected), mapper.type());
         var projection = RecordMapper.of(projectionType);
         return new Page<>(page.items().stream().map(projection::read).toList(), page.nextCursor());
     }

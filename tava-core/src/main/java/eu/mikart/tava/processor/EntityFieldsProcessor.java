@@ -10,6 +10,7 @@ import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.PrimitiveType;
 import javax.tools.Diagnostic;
@@ -31,6 +32,15 @@ public final class EntityFieldsProcessor extends AbstractProcessor {
                             .getMessager()
                             .printMessage(
                                     Diagnostic.Kind.WARNING, "Field companions require a non-generic record", record);
+                    continue;
+                }
+                if (!accessibleFromCompanion(record)) {
+                    processingEnv
+                            .getMessager()
+                            .printMessage(
+                                    Diagnostic.Kind.NOTE,
+                                    "Use FieldRef.of for records inaccessible from a generated companion",
+                                    record);
                     continue;
                 }
                 String packageName = processingEnv
@@ -69,9 +79,10 @@ public final class EntityFieldsProcessor extends AbstractProcessor {
                                 : processingEnv.getTypeUtils().erasure(type).toString();
                         String fieldName = component.getSimpleName().toString();
                         var mapped = component.getAnnotation(Field.class);
-                        String storageName = mapped == null || mapped.value().isEmpty() ? fieldName : mapped.value();
+                        String storageName = mapped == null || mapped.value().isBlank() ? fieldName : mapped.value();
                         writer.write("/** Storage field for " + fieldName + ". */\n");
-                        writer.write("public static final eu.mikart.tava.query.FieldRef<" + javaType + "> "
+                        writer.write("public static final eu.mikart.tava.query.FieldRef<" + record.getQualifiedName()
+                                + ", " + javaType + "> "
                                 + fieldName + " = new eu.mikart.tava.query.FieldRef<>(\"" + escape(storageName)
                                 + "\", (Class) " + erased + ".class);\n");
                     }
@@ -87,6 +98,15 @@ public final class EntityFieldsProcessor extends AbstractProcessor {
             }
         }
         return false;
+    }
+
+    private static boolean accessibleFromCompanion(TypeElement record) {
+        if (record.getQualifiedName().isEmpty()) return false;
+        for (var element = record; element != null; ) {
+            if (element.getModifiers().contains(Modifier.PRIVATE)) return false;
+            element = element.getEnclosingElement() instanceof TypeElement enclosing ? enclosing : null;
+        }
+        return true;
     }
 
     private static String escape(String value) {

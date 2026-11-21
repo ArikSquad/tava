@@ -125,7 +125,8 @@ public record Query(
          * @param rest remaining projected fields
          * @return this builder
          */
-        public Builder project(FieldRef<?> first, FieldRef<?>... rest) {
+        @SafeVarargs
+        public final Builder project(FieldRef<Record, ?> first, FieldRef<Record, ?>... rest) {
             var fields = new ArrayList<String>();
             fields.add(first.name());
             for (var field : rest) fields.add(field.name());

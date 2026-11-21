@@ -4,11 +4,13 @@ import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
+import eu.mikart.tava.query.Aggregation;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.QueryDiagnostics;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Forwards entity operations, including adapter-specific result and batch behavior. The default single-record lookup
@@ -40,6 +42,17 @@ public abstract class ForwardingEntityStore implements EntityStore {
     @Override
     public NativeAccess nativeAccess() {
         return delegate().nativeAccess();
+    }
+
+    @Override
+    public Optional<Number> incrementReturning(
+            String entity, Identity key, String field, Number amount, boolean create) {
+        return delegate().incrementReturning(entity, key, field, amount, create);
+    }
+
+    @Override
+    public List<EntityRecord> aggregate(String entity, Aggregation aggregation) {
+        return delegate().aggregate(entity, aggregation);
     }
 
     @Override
@@ -116,6 +129,11 @@ public abstract class ForwardingEntityStore implements EntityStore {
      *
      * @since 1.3.0
      */
+    @Override
+    public Page<EntityRecord> find(String entity, Query query, Class<? extends Record> sourceType) {
+        return delegate().find(entity, query, sourceType);
+    }
+
     @Override
     public long update(String entity, Predicate predicate, Mutation mutation) {
         return delegate().update(entity, predicate, mutation);

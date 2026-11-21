@@ -6,27 +6,33 @@ import com.mongodb.MongoWriteException;
 import com.mongodb.client.ClientSession;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Collation;
 import com.mongodb.client.model.CollationAlternate;
 import com.mongodb.client.model.CollationCaseFirst;
 import com.mongodb.client.model.CollationMaxVariable;
 import com.mongodb.client.model.CollationStrength;
+import com.mongodb.client.model.FindOneAndUpdateOptions;
 import com.mongodb.client.model.IndexOptions;
+import com.mongodb.client.model.ReturnDocument;
 import com.mongodb.client.model.UpdateOptions;
 import com.mongodb.client.model.Updates;
 import eu.mikart.tava.TavaException;
 import eu.mikart.tava.capability.*;
 import eu.mikart.tava.data.ConflictDetail;
 import eu.mikart.tava.data.EntityRecord;
+import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
+import eu.mikart.tava.query.Aggregation;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.QueryDiagnostics;
 import eu.mikart.tava.query.Sort;
 import eu.mikart.tava.schema.*;
+import eu.mikart.tava.schema.annotation.Field;
 import eu.mikart.tava.schema.plan.ApplyOptions;
 import eu.mikart.tava.schema.plan.ChangeRisk;
 import eu.mikart.tava.schema.plan.SchemaChange;
@@ -79,6 +85,8 @@ final class MongoAdapter implements Adapter {
                         Feature.SECONDARY_INDEXES,
                         Feature.TRANSACTIONS,
                         Feature.CONDITIONAL_WRITES,
+                        Feature.INCREMENT_RETURNING,
+                        Feature.AGGREGATION,
                         Feature.SORTING,
                         Feature.PAGINATION,
                         Feature.PROJECTION,
@@ -86,17 +94,16 @@ final class MongoAdapter implements Adapter {
                         Feature.JSON,
                         Feature.BINARY,
                         Feature.BULK_READ,
-                        Feature.ATOMIC_BULK_WRITE)
+                        Feature.BULK_WRITE)
                 .set(
-                        Feature.BULK_WRITE,
-                        SupportLevel.SUPPORTED,
-                        "Atomic batch inserts require a replica set or sharded cluster")
+                        Feature.ATOMIC_BULK_WRITE,
+                        SupportLevel.UNSUPPORTED,
+                        "Use an explicit transaction on a replica set or sharded cluster")
                 .set(Feature.TTL, SupportLevel.NATIVE_ONLY, "Configure TTL indexes through MongoDatabase")
                 .set(
                         Feature.FULL_TEXT,
                         SupportLevel.NATIVE_ONLY,
                         "Configure and query text indexes through MongoDatabase")
-                .set(Feature.AGGREGATION, SupportLevel.NATIVE_ONLY, "Use MongoDB aggregation pipelines")
                 .set(Feature.SCHEMA_ENFORCEMENT, SupportLevel.EMULATED, "Strict MongoDB JSON Schema validators")
                 .set(Feature.UNIQUE_CONSTRAINTS, SupportLevel.EMULATED, "Unique indexes")
                 .set(Feature.FOREIGN_KEYS, SupportLevel.UNSUPPORTED, "MongoDB does not enforce foreign keys")
@@ -165,6 +172,79 @@ final class MongoAdapter implements Adapter {
             return EntityRecord.of(readDocument(document));
         }
 
+        @Override
+        public Optional<Number> incrementReturning(
+                String entity, Identity key, String field, Number amount, boolean create) {
+            if (field == null
+                    || field.isBlank()
+                    || field.startsWith("$")
+                    || field.contains(".")
+                    || field.indexOf('\0') >= 0
+                    || field.equals("_id")
+                    || key.values().containsKey(field)) {
+                throw new IllegalArgumentException("Expected a top-level counter field outside the unique key");
+            }
+            Objects.requireNonNull(amount, "amount");
+            Document match = new Document();
+            key.values().forEach((name, value) -> {
+                if (name.isBlank() || name.startsWith("$") || name.indexOf('\0') >= 0 || name.startsWith(field + ".")) {
+                    throw new IllegalArgumentException("Invalid counter key field: " + name);
+                }
+                match.append(name, new Document("$eq", writeValue(value)));
+            });
+            Bson update = new Document("$inc", new Document(field, writeValue(amount)));
+            var options = new FindOneAndUpdateOptions()
+                    .upsert(create)
+                    .returnDocument(ReturnDocument.AFTER)
+                    .projection(new Document(field, 1));
+            var target = collection(entity);
+            Document result = session == null
+                    ? target.findOneAndUpdate(match, update, options)
+                    : target.findOneAndUpdate(session, match, update, options);
+            return Optional.ofNullable(result).map(row -> (Number) readValue(row.get(field)));
+        }
+
+        @Override
+        public List<EntityRecord> aggregate(String entity, Aggregation aggregation) {
+            Document key = new Document();
+            Document group = new Document("_id", aggregation.groupBy().isEmpty() ? null : key);
+            for (String field : aggregation.groupBy()) {
+                key.append(field, new Document("$ifNull", Arrays.asList("$" + field, null)));
+            }
+            for (int i = 0; i < aggregation.metrics().size(); i++) {
+                var metric = aggregation.metrics().get(i);
+                Object source = "$" + metric.field();
+                Document accumulator = switch (metric.operation()) {
+                    case COUNT -> new Document("$sum", 1L);
+                    case SUM -> new Document("$sum", source);
+                    case AVG -> new Document("$avg", source);
+                    case MIN -> new Document("$min", source);
+                    case MAX -> new Document("$max", source);
+                };
+                group.append("metric" + i, accumulator);
+            }
+            List<Bson> pipeline =
+                    List.of(new Document("$match", filter(aggregation.predicate())), new Document("$group", group));
+            var target = collection(entity);
+            var result = session == null ? target.aggregate(pipeline) : target.aggregate(session, pipeline);
+            List<EntityRecord> rows = new ArrayList<>();
+            try (MongoCursor<Document> cursor = result.iterator()) {
+                while (cursor.hasNext()) {
+                    Document row = cursor.next();
+                    Map<String, Object> values = new LinkedHashMap<>();
+                    Document groupValues = row.get("_id", Document.class);
+                    for (String field : aggregation.groupBy()) {
+                        values.put(field, readValue(groupValues.get(field)));
+                    }
+                    for (int i = 0; i < aggregation.metrics().size(); i++) {
+                        values.put(aggregation.metrics().get(i).alias(), readValue(row.get("metric" + i)));
+                    }
+                    rows.add(EntityRecord.of(values));
+                }
+            }
+            return List.copyOf(rows);
+        }
+
         private Document prepare(String entity, EntityRecord record) {
             Map<String, Object> values = new LinkedHashMap<>(record.values());
             for (FieldDefinition field : definition(entity).fields()) {
@@ -184,12 +264,7 @@ final class MongoAdapter implements Adapter {
             if (session != null) {
                 collection(entity).insertMany(session, documents);
             } else {
-                try (ClientSession batchSession = client.startSession()) {
-                    batchSession.withTransaction(() -> {
-                        collection(entity).insertMany(batchSession, documents);
-                        return null;
-                    });
-                }
+                collection(entity).insertMany(documents);
             }
             return documents.stream()
                     .map(value -> EntityRecord.of(readDocument(value)))
@@ -242,18 +317,15 @@ final class MongoAdapter implements Adapter {
 
         @Override
         public @NotNull Page<EntityRecord> find(@NotNull String entity, @NotNull Query query) {
+            return find(entity, query, null);
+        }
+
+        @Override
+        public Page<EntityRecord> find(String entity, Query query, Class<? extends Record> sourceType) {
             List<Sort> order = KeysetPagination.ordering(query.sorting(), List.of("_id"));
             for (var sort : order) {
                 if (sort.field().equals("_id")) continue;
-                FieldDefinition field = definition(entity).fields().stream()
-                        .filter(value -> value.name().equals(sort.field()))
-                        .findFirst()
-                        .orElseThrow(() -> new TavaException.Capability(
-                                "Keyset sort requires a declared scalar field: " + sort.field()));
-                if (field.type().logicalType() == LogicalType.JSON
-                        || sort.field().contains("."))
-                    throw new TavaException.Capability(
-                            "Keyset sort does not support document or array fields: " + sort.field());
+                validateSort(entity, sort.field(), sourceType);
             }
             Bson original = filter(query.predicate());
             String filterSignature = original.toBsonDocument(Document.class, database.getCodecRegistry())
@@ -505,6 +577,36 @@ final class MongoAdapter implements Adapter {
                                 : options.getString("validationAction") == null
                                         ? "error"
                                         : options.getString("validationAction")));
+    }
+
+    private void validateSort(String entity, String name, Class<? extends Record> sourceType) {
+        if (sourceType != null) {
+            for (var component : sourceType.getRecordComponents()) {
+                Field field = component.getAnnotation(Field.class);
+                String mapped = field == null || field.value().isBlank() ? component.getName() : field.value();
+                if (!mapped.equals(name)) continue;
+                Class<?> type = component.getType();
+                validateScalarSort(
+                        name,
+                        type.isRecord()
+                                || Map.class.isAssignableFrom(type)
+                                || Collection.class.isAssignableFrom(type)
+                                || (type.isArray() && type != byte[].class));
+                return;
+            }
+        }
+        FieldDefinition field = definition(entity).fields().stream()
+                .filter(value -> value.name().equals(name))
+                .findFirst()
+                .orElseThrow(
+                        () -> new TavaException.Capability("Keyset sort requires a declared scalar field: " + name));
+        validateScalarSort(name, field.type().logicalType() == LogicalType.JSON);
+    }
+
+    private static void validateScalarSort(String name, boolean composite) {
+        if (composite || name.contains(".")) {
+            throw new TavaException.Capability("Keyset sort does not support document or array fields: " + name);
+        }
     }
 
     private EntityDefinition definition(String name) {

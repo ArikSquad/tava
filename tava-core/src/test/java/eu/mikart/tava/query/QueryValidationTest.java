@@ -209,7 +209,7 @@ class QueryValidationTest {
                 NullPointerException.class,
                 () -> Mutation.builder().increment(new FieldRef<>("count", Integer.class), null));
 
-        FieldRef<Collection<String>> tags = FieldRef.collection("tags", String.class);
+        FieldRef<Record, Collection<String>> tags = FieldRef.collection("tags", String.class);
         Mutation appendIfAbsent =
                 Mutation.builder().appendIfAbsent(tags, "newTag").build();
         assertEquals(
@@ -275,8 +275,8 @@ class QueryValidationTest {
 
     @Test
     void fieldRefInPredicates() {
-        FieldRef<String> stringRef = new FieldRef<>("name", String.class);
-        FieldRef<Integer> intRef = new FieldRef<>("age", Integer.class);
+        FieldRef<Record, String> stringRef = new FieldRef<>("name", String.class);
+        FieldRef<Record, Integer> intRef = new FieldRef<>("age", Integer.class);
 
         Predicate eqString = Predicate.eq(stringRef, "test");
         assertEquals("name", ((Predicate.Comparison) eqString).field());
@@ -295,20 +295,21 @@ class QueryValidationTest {
         var score = FieldRef.of("score", Integer.class);
         var name = FieldRef.of("name", String.class);
         var tags = FieldRef.collection("tags", String.class);
-        assertEquals(Predicate.ne("score", 3), score.ne(3));
-        assertEquals(Predicate.lt("score", 3), score.lt(3));
+        assertEquals(Predicate.ne("score", 3), score.ne(3).predicate());
+        assertEquals(Predicate.lt("score", 3), score.lt(3).predicate());
         assertEquals(Predicate.lte("score", 3), Predicate.lte(score, 3));
         assertEquals(Predicate.gt("score", 3), Predicate.gt(score, 3));
-        assertEquals(Predicate.gte("score", 3), score.gte(3));
-        assertEquals(Predicate.in("score", List.of(1, 3)), score.in(List.of(1, 3)));
-        assertEquals(Predicate.isNull("score"), score.isNull());
-        assertEquals(Predicate.isNotNull("score"), score.isNotNull());
+        assertEquals(Predicate.gte("score", 3), score.gte(3).predicate());
+        assertEquals(
+                Predicate.in("score", List.of(1, 3)), score.in(List.of(1, 3)).predicate());
+        assertEquals(Predicate.isNull("score"), score.isNull().predicate());
+        assertEquals(Predicate.isNotNull("score"), score.isNotNull().predicate());
         assertEquals(Predicate.startsWith("name", "A"), Predicate.startsWith(name, "A"));
         assertEquals(Predicate.contains("name", "A"), Predicate.contains(name, "A"));
         assertEquals(Predicate.contains("tags", "A"), Predicate.contains(tags, "A"));
         Query query = Query.builder()
                 .project(score, name)
-                .sort(score.desc(), name.asc())
+                .sort(score.desc().sort(), name.asc().sort())
                 .build();
         assertEquals(List.of("score", "name"), query.projection());
         assertEquals(List.of(Sort.desc("score"), Sort.asc("name")), query.sorting());

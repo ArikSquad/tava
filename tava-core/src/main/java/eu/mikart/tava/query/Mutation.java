@@ -100,7 +100,7 @@ public record Mutation(
          * @return this builder
          * @throws NullPointerException if {@code field} is {@code null}
          */
-        public <T> @NotNull Builder set(final @NotNull FieldRef<T> field, final @Nullable T value) {
+        public <T> @NotNull Builder set(final @NotNull FieldRef<Record, T> field, final @Nullable T value) {
             return set(field.name(), value);
         }
 
@@ -113,7 +113,7 @@ public record Mutation(
          * @throws NullPointerException if {@code field} or {@code amount} is {@code null}
          */
         public @NotNull Builder increment(
-                final @NotNull FieldRef<? extends Number> field, final @NotNull Number amount) {
+                final @NotNull FieldRef<Record, ? extends Number> field, final @NotNull Number amount) {
             Objects.requireNonNull(field, "field");
             Objects.requireNonNull(amount, "amount");
             operations.put(field.name(), new Operation(Kind.INCREMENT, amount));
@@ -129,7 +129,7 @@ public record Mutation(
          * @throws NullPointerException if {@code field} is {@code null}
          */
         public <T> @NotNull Builder appendIfAbsent(
-                final @NotNull FieldRef<? extends Collection<T>> field, final @Nullable T value) {
+                final @NotNull FieldRef<Record, ? extends Collection<T>> field, final @Nullable T value) {
             operations.put(field.name(), new Operation(Kind.APPEND_IF_ABSENT, value));
             return this;
         }
@@ -145,7 +145,7 @@ public record Mutation(
          */
         @Deprecated(since = "1.3.0", forRemoval = false)
         public <T> @NotNull Builder append(
-                final @NotNull FieldRef<? extends Collection<T>> field, final @Nullable T value) {
+                final @NotNull FieldRef<Record, ? extends Collection<T>> field, final @Nullable T value) {
             return appendIfAbsent(field, value);
         }
 
@@ -159,7 +159,7 @@ public record Mutation(
          * @throws NullPointerException if {@code field} is {@code null}
          */
         public <T> @NotNull Builder remove(
-                final @NotNull FieldRef<? extends Collection<T>> field, final @Nullable T value) {
+                final @NotNull FieldRef<Record, ? extends Collection<T>> field, final @Nullable T value) {
             operations.put(field.name(), new Operation(Kind.REMOVE, value));
             return this;
         }

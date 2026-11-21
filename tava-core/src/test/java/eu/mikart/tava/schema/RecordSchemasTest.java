@@ -39,8 +39,9 @@ class RecordSchemasTest {
         Files.writeString(usage, """
                 package sample;
                 class Usage {
-                    eu.mikart.tava.query.Predicate query = SampleFields.score.gte(2);
-                    eu.mikart.tava.query.Mutation mutation = eu.mikart.tava.query.Mutation.builder()
+                    eu.mikart.tava.query.TypedQuery<Sample> query = eu.mikart.tava.query.TypedQuery.builder(Sample.class)
+                        .where(SampleFields.score.gte(2)).sort(SampleFields.email.asc()).build();
+                    eu.mikart.tava.query.TypedMutation<Sample> mutation = eu.mikart.tava.query.TypedMutation.builder(Sample.class)
                         .appendIfAbsent(SampleFields.ids, java.util.UUID.randomUUID()).build();
                 }
                 """);
@@ -66,9 +67,9 @@ class RecordSchemasTest {
         try (var loader = new URLClassLoader(
                 new URL[] {directory.toUri().toURL()}, getClass().getClassLoader())) {
             var generated = loader.loadClass("sample.SampleFields");
-            var email = (FieldRef<?>) generated.getField("email").get(null);
+            var email = (FieldRef<?, ?>) generated.getField("email").get(null);
             assertEquals("email_address", email.name());
-            var score = (FieldRef<?>) generated.getField("score").get(null);
+            var score = (FieldRef<?, ?>) generated.getField("score").get(null);
             assertEquals(Integer.class, score.type());
         }
     }

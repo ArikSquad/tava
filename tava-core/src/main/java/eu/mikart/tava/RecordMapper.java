@@ -59,6 +59,11 @@ final class RecordMapper<T extends Record> {
     }
 
     private final Class<T> type;
+
+    Class<T> type() {
+        return type;
+    }
+
     private final RecordMetadata metadata;
     private final String entityName;
 

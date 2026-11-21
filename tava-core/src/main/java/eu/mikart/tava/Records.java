@@ -4,6 +4,7 @@ import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
+import eu.mikart.tava.query.Aggregation;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Pages;
 import eu.mikart.tava.query.Predicate;
@@ -72,6 +73,31 @@ public final class Records {
     @Blocking
     public Object upsertReturningKey(Identity key, EntityRecord insert, Mutation update, String returnColumn) {
         return store.upsertReturningKey(entity, key, insert, update, returnColumn);
+    }
+
+    /**
+     * Increments a counter atomically and returns the value from that write.
+     *
+     * @param key identity protected by a unique constraint
+     * @param field counter field
+     * @param amount amount to add
+     * @param create whether to insert a missing row with just the identity and counter
+     * @return new value, or empty if the row is missing and creation is disabled
+     */
+    @Blocking
+    public Optional<Number> incrementReturning(Identity key, String field, Number amount, boolean create) {
+        return store.incrementReturning(entity, key, field, amount, create);
+    }
+
+    /**
+     * Computes grouped results over matching records.
+     *
+     * @param aggregation grouping and metric request
+     * @return group keys and computed metrics
+     */
+    @Blocking
+    public List<EntityRecord> aggregate(Aggregation aggregation) {
+        return store.aggregate(entity, aggregation);
     }
 
     /**

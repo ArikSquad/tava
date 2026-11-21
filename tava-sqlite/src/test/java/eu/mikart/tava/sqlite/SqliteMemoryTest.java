@@ -61,7 +61,7 @@ class SqliteMemoryTest extends AdapterContractTest {
     record Player(@Identity UUID id, Rank rank, Set<UUID> emblems) {}
 
     @SuppressWarnings("unchecked")
-    private static final FieldRef<Collection<UUID>> EMBLEMS =
+    private static final FieldRef<Record, Collection<UUID>> EMBLEMS =
             FieldRef.of("emblems", (Class<Collection<UUID>>) (Class<?>) Collection.class);
 
     @Test
