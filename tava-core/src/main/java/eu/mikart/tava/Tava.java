@@ -5,6 +5,7 @@ import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
+import eu.mikart.tava.query.Aggregation;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
@@ -54,6 +55,21 @@ public final class Tava implements AutoCloseable {
         @Override
         protected EntityStore delegate() {
             return withLifecycle(Tava.this::currentStore);
+        }
+
+        @Override
+        public Optional<Number> incrementReturning(
+                String entity, Identity key, String field, Number amount, boolean create) {
+            return withStore(
+                    "incrementReturning",
+                    entity,
+                    1,
+                    store -> store.incrementReturning(entity, key, field, amount, create));
+        }
+
+        @Override
+        public List<EntityRecord> aggregate(String entity, Aggregation aggregation) {
+            return withStore("aggregate", entity, 1, store -> store.aggregate(entity, aggregation));
         }
 
         @Override
@@ -110,6 +126,11 @@ public final class Tava implements AutoCloseable {
         @Override
         public Page<EntityRecord> find(String entity, Query query) {
             return withStore("find", entity, 1, store -> store.find(entity, configured(query)));
+        }
+
+        @Override
+        public Page<EntityRecord> find(String entity, Query query, Class<? extends Record> sourceType) {
+            return withStore("find", entity, 1, store -> store.find(entity, configured(query), sourceType));
         }
 
         @Override

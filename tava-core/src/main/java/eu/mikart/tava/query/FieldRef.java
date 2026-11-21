@@ -1,6 +1,6 @@
 package eu.mikart.tava.query;
 
-import eu.mikart.tava.schema.RecordSchemas;
+import eu.mikart.tava.schema.annotation.Field;
 import java.lang.invoke.MethodType;
 import java.util.Collection;
 import java.util.Objects;
@@ -9,11 +9,13 @@ import org.jetbrains.annotations.NotNull;
 /**
  * A reusable, typed field name. Generated model companions can expose these as constants.
  *
+ * @param <R> owning record type
  * @param <T> Java type expected for values of the field
  * @param name field name
  * @param type class of the field's Java type
  */
-public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
+public record FieldRef<R extends Record, T>(
+        @NotNull String name, @NotNull Class<T> type) {
     /**
      * Creates a typed field reference.
      *
@@ -35,7 +37,7 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      * @return a reference to the named field
      * @throws IllegalArgumentException if {@code name} is blank or {@code type} is {@code null}
      */
-    public static <T> @NotNull FieldRef<T> of(@NotNull String name, @NotNull Class<T> type) {
+    public static <T> @NotNull FieldRef<Record, T> of(@NotNull String name, @NotNull Class<T> type) {
         return new FieldRef<>(name, type);
     }
     /**
@@ -43,18 +45,18 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      * accept their boxed class; other types must match exactly.
      *
      * @param <T> field value type
+     * @param <R> owning record type
      * @param recordType owning record type
      * @param componentName Java record component name
      * @param type expected field class
      * @return mapped field reference
      * @throws IllegalArgumentException if the component is absent or has a different type
      */
-    public static <T> FieldRef<T> of(Class<? extends Record> recordType, String componentName, Class<T> type) {
+    public static <R extends Record, T> FieldRef<R, T> of(Class<R> recordType, String componentName, Class<T> type) {
         Objects.requireNonNull(type, "type");
         var components = recordType.getRecordComponents();
         if (components == null) throw new IllegalArgumentException("record type is required");
-        for (int i = 0; i < components.length; i++) {
-            var component = components[i];
+        for (var component : components) {
             if (!component.getName().equals(componentName)) continue;
             Class<?> actual = component.getType();
             if (actual.isPrimitive()) {
@@ -62,8 +64,9 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
             }
             if (!actual.equals(type))
                 throw new IllegalArgumentException("Component type does not match " + type.getName());
-            var definition = RecordSchemas.describe(recordType);
-            return of(definition.fields().get(i).name(), type);
+            Field mapped = component.getAnnotation(Field.class);
+            String name = mapped == null || mapped.value().isBlank() ? componentName : mapped.value();
+            return new FieldRef<>(name, type);
         }
         throw new IllegalArgumentException("Unknown record component: " + componentName);
     }
@@ -78,9 +81,18 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      * @return collection field reference
      */
     @SuppressWarnings("unchecked")
-    public static <E> FieldRef<Collection<E>> collection(String name, Class<E> elementType) {
+    public static <E> FieldRef<Record, Collection<E>> collection(String name, Class<E> elementType) {
         Objects.requireNonNull(elementType, "elementType");
         return new FieldRef<>(name, (Class<Collection<E>>) (Class<?>) Collection.class);
+    }
+
+    /**
+     * Drops record ownership at a dynamic API boundary.
+     *
+     * @return value-typed field reference
+     */
+    public FieldRef<Record, T> untyped() {
+        return of(name, type);
     }
 
     /**
@@ -89,8 +101,8 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      * @param value comparison value
      * @return equality predicate
      */
-    public Predicate eq(T value) {
-        return Predicate.eq(this, value);
+    public TypedQuery.Filter<R> eq(T value) {
+        return new TypedQuery.Filter<>(Predicate.eq(name, value));
     }
 
     /**
@@ -99,8 +111,8 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      * @param value comparison value
      * @return inequality predicate
      */
-    public Predicate ne(T value) {
-        return Predicate.ne(this, value);
+    public TypedQuery.Filter<R> ne(T value) {
+        return new TypedQuery.Filter<>(Predicate.ne(name, value));
     }
 
     /**
@@ -109,8 +121,8 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      * @param values values to match
      * @return membership predicate
      */
-    public Predicate in(Collection<? extends T> values) {
-        return Predicate.in(this, values);
+    public TypedQuery.Filter<R> in(Collection<? extends T> values) {
+        return new TypedQuery.Filter<>(Predicate.in(name, values));
     }
 
     /**
@@ -119,8 +131,8 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      * @param value comparison value
      * @return less-than predicate
      */
-    public Predicate lt(T value) {
-        return Predicate.lt(name, value);
+    public TypedQuery.Filter<R> lt(T value) {
+        return new TypedQuery.Filter<>(Predicate.lt(name, value));
     }
 
     /**
@@ -129,8 +141,8 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      * @param value comparison value
      * @return less-than-or-equal predicate
      */
-    public Predicate lte(T value) {
-        return Predicate.lte(name, value);
+    public TypedQuery.Filter<R> lte(T value) {
+        return new TypedQuery.Filter<>(Predicate.lte(name, value));
     }
 
     /**
@@ -139,8 +151,8 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      * @param value comparison value
      * @return greater-than predicate
      */
-    public Predicate gt(T value) {
-        return Predicate.gt(name, value);
+    public TypedQuery.Filter<R> gt(T value) {
+        return new TypedQuery.Filter<>(Predicate.gt(name, value));
     }
 
     /**
@@ -149,8 +161,8 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      * @param value comparison value
      * @return greater-than-or-equal predicate
      */
-    public Predicate gte(T value) {
-        return Predicate.gte(name, value);
+    public TypedQuery.Filter<R> gte(T value) {
+        return new TypedQuery.Filter<>(Predicate.gte(name, value));
     }
 
     /**
@@ -158,8 +170,8 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      *
      * @return null-check predicate
      */
-    public Predicate isNull() {
-        return Predicate.isNull(this);
+    public TypedQuery.Filter<R> isNull() {
+        return new TypedQuery.Filter<>(Predicate.isNull(name));
     }
 
     /**
@@ -167,8 +179,8 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      *
      * @return non-null-check predicate
      */
-    public Predicate isNotNull() {
-        return Predicate.isNotNull(this);
+    public TypedQuery.Filter<R> isNotNull() {
+        return new TypedQuery.Filter<>(Predicate.isNotNull(name));
     }
 
     /**
@@ -176,8 +188,8 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      *
      * @return ascending sort
      */
-    public Sort asc() {
-        return Sort.asc(this);
+    public TypedQuery.Order<R> asc() {
+        return new TypedQuery.Order<>(Sort.asc(name));
     }
 
     /**
@@ -185,7 +197,7 @@ public record FieldRef<T>(@NotNull String name, @NotNull Class<T> type) {
      *
      * @return descending sort
      */
-    public Sort desc() {
-        return Sort.desc(this);
+    public TypedQuery.Order<R> desc() {
+        return new TypedQuery.Order<>(Sort.desc(name));
     }
 }

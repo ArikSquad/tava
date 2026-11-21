@@ -7,6 +7,7 @@ import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
+import eu.mikart.tava.query.Aggregation;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Pages;
 import eu.mikart.tava.query.Predicate;
@@ -18,6 +19,37 @@ import org.jetbrains.annotations.NotNull;
 
 /** Executes entity reads and writes for an adapter. */
 public interface EntityStore {
+    /**
+     * Atomically increments a field and returns its new value. The key must be protected by a unique constraint. With
+     * creation enabled, a missing counter starts at zero and the inserted row consists of the key and counter. With
+     * creation disabled, a missing row yields an empty result.
+     */
+    /**
+     * Increments a counter atomically and returns the value from that write.
+     *
+     * @param entity entity name
+     * @param key identity protected by a unique constraint
+     * @param field counter field
+     * @param amount amount to add
+     * @param create whether to insert a missing row with just the identity and counter
+     * @return new value, or empty if the row is missing and creation is disabled
+     */
+    default Optional<Number> incrementReturning(
+            String entity, Identity key, String field, Number amount, boolean create) {
+        throw new Capability("Adapter does not support atomic increment with a returned value");
+    }
+
+    /**
+     * Groups matching rows and computes the requested metrics.
+     *
+     * @param entity entity name
+     * @param aggregation grouping and metric request
+     * @return group keys and computed metrics
+     */
+    default List<EntityRecord> aggregate(String entity, Aggregation aggregation) {
+        throw new Capability("Adapter does not support grouped aggregation");
+    }
+
     /**
      * Inserts one record.
      *
@@ -96,6 +128,18 @@ public interface EntityStore {
      */
     @NotNull
     Page<EntityRecord> find(@NotNull String entity, @NotNull Query query);
+
+    /**
+     * Finds a page with the source record type available for query validation.
+     *
+     * @param entity entity name
+     * @param query page request
+     * @param sourceType source record class
+     * @return page of matching records
+     */
+    default Page<EntityRecord> find(String entity, Query query, Class<? extends Record> sourceType) {
+        return find(entity, query);
+    }
 
     /**
      * Finds one matching record, if any.

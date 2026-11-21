@@ -112,7 +112,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param value comparison value, which may be {@code null}
      * @return equality predicate
      */
-    static <T> @NotNull Predicate eq(final @NotNull FieldRef<T> field, final @Nullable T value) {
+    static <T> @NotNull Predicate eq(final @NotNull FieldRef<Record, T> field, final @Nullable T value) {
         return eq(field.name(), value);
     }
 
@@ -261,7 +261,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param value comparison value
      * @return comparison predicate
      */
-    static <T> Predicate ne(FieldRef<T> field, T value) {
+    static <T> Predicate ne(FieldRef<Record, T> field, T value) {
         return ne(field.name(), value);
     }
 
@@ -273,7 +273,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param value comparison value
      * @return comparison predicate
      */
-    static <T> Predicate lt(FieldRef<T> field, T value) {
+    static <T> Predicate lt(FieldRef<Record, T> field, T value) {
         return lt(field.name(), value);
     }
 
@@ -285,7 +285,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param value comparison value
      * @return comparison predicate
      */
-    static <T> Predicate lte(FieldRef<T> field, T value) {
+    static <T> Predicate lte(FieldRef<Record, T> field, T value) {
         return lte(field.name(), value);
     }
 
@@ -297,7 +297,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param value comparison value
      * @return comparison predicate
      */
-    static <T> Predicate gt(FieldRef<T> field, T value) {
+    static <T> Predicate gt(FieldRef<Record, T> field, T value) {
         return gt(field.name(), value);
     }
 
@@ -309,7 +309,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param value comparison value
      * @return comparison predicate
      */
-    static <T> Predicate gte(FieldRef<T> field, T value) {
+    static <T> Predicate gte(FieldRef<Record, T> field, T value) {
         return gte(field.name(), value);
     }
 
@@ -319,7 +319,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param field field reference
      * @return null-check predicate
      */
-    static Predicate isNull(FieldRef<?> field) {
+    static Predicate isNull(FieldRef<Record, ?> field) {
         return isNull(field.name());
     }
 
@@ -329,7 +329,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param field field reference
      * @return null-check predicate
      */
-    static Predicate isNotNull(FieldRef<?> field) {
+    static Predicate isNotNull(FieldRef<Record, ?> field) {
         return isNotNull(field.name());
     }
 
@@ -341,7 +341,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param values values to match
      * @return membership predicate
      */
-    static <T> Predicate in(FieldRef<T> field, Collection<? extends T> values) {
+    static <T> Predicate in(FieldRef<Record, T> field, Collection<? extends T> values) {
         return in(field.name(), values);
     }
 
@@ -352,7 +352,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param value prefix
      * @return prefix predicate
      */
-    static Predicate startsWith(FieldRef<String> field, String value) {
+    static Predicate startsWith(FieldRef<Record, String> field, String value) {
         return startsWith(field.name(), value);
     }
 
@@ -363,7 +363,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param value substring
      * @return contains predicate
      */
-    static Predicate contains(FieldRef<String> field, String value) {
+    static Predicate contains(FieldRef<Record, String> field, String value) {
         return contains(field.name(), value);
     }
 
@@ -375,7 +375,7 @@ public sealed interface Predicate permits Predicate.All, Predicate.Comparison, P
      * @param value element to find
      * @return contains predicate
      */
-    static <E> Predicate contains(FieldRef<? extends Collection<E>> field, E value) {
+    static <E> Predicate contains(FieldRef<Record, ? extends Collection<E>> field, E value) {
         return contains(field.name(), value);
     }
 }

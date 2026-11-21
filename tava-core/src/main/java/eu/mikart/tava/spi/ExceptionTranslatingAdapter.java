@@ -5,6 +5,7 @@ import eu.mikart.tava.data.EntityRecord;
 import eu.mikart.tava.data.Identity;
 import eu.mikart.tava.data.MutationResult;
 import eu.mikart.tava.data.Page;
+import eu.mikart.tava.query.Aggregation;
 import eu.mikart.tava.query.Mutation;
 import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
@@ -58,6 +59,22 @@ public final class ExceptionTranslatingAdapter implements Adapter {
 
             public NativeAccess nativeAccess() {
                 return store.nativeAccess();
+            }
+
+            @Override
+            public Optional<Number> incrementReturning(
+                    String entity, Identity key, String field, Number amount, boolean create) {
+                return call(() -> store.incrementReturning(entity, key, field, amount, create));
+            }
+
+            @Override
+            public List<EntityRecord> aggregate(String entity, Aggregation aggregation) {
+                return call(() -> store.aggregate(entity, aggregation));
+            }
+
+            @Override
+            public Page<EntityRecord> find(String entity, Query query, Class<? extends Record> sourceType) {
+                return call(() -> store.find(entity, query, sourceType));
             }
 
             @Override

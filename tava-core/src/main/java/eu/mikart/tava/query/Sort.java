@@ -56,7 +56,7 @@ public record Sort(@NotNull String field, @NotNull Direction direction) {
      * @param field typed field reference
      * @return ascending sort order
      */
-    public static Sort asc(FieldRef<?> field) {
+    public static Sort asc(FieldRef<Record, ?> field) {
         return asc(field.name());
     }
 
@@ -66,7 +66,7 @@ public record Sort(@NotNull String field, @NotNull Direction direction) {
      * @param field typed field reference
      * @return descending sort order
      */
-    public static Sort desc(FieldRef<?> field) {
+    public static Sort desc(FieldRef<Record, ?> field) {
         return desc(field.name());
     }
 }
