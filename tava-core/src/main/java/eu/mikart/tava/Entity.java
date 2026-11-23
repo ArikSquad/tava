@@ -86,6 +86,39 @@ public final class Entity<T extends Record> {
     }
 
     /**
+     * Counts records matching a typed filter.
+     *
+     * @param filter condition selecting records
+     * @return number of matching records
+     */
+    @Blocking
+    public long count(TypedQuery.Filter<T> filter) {
+        return count(filter.predicate());
+    }
+
+    /**
+     * Checks whether any record matches a typed filter.
+     *
+     * @param filter condition selecting records
+     * @return whether a match exists
+     */
+    @Blocking
+    public boolean exists(TypedQuery.Filter<T> filter) {
+        return exists(filter.predicate());
+    }
+
+    /**
+     * Deletes records matching a typed filter.
+     *
+     * @param filter condition selecting records
+     * @return number of deleted records
+     */
+    @Blocking
+    public long delete(TypedQuery.Filter<T> filter) {
+        return delete(filter.predicate());
+    }
+
+    /**
      * Applies a typed mutation to the record with the given identity.
      *
      * @param id record identity
