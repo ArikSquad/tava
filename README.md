@@ -40,7 +40,7 @@ Schema schema = Schema.of(Account.class);
 try(Tava tava = Tava.open(Postgres.connect(jdbcUrl, user, password))) {
     tava.schema().ensure(schema); // safe additive setup; use SchemaHistory for versioned migrations
 
-    var accounts = tava.entity(Account.class);
+    var accounts = tava.entityHandle(Account.class);
     accounts.insert(new Account(UUID.randomUUID(), "ada@example.com", 7, null));
 
     Page<Account> page = accounts.find(Query.builder()
@@ -102,7 +102,7 @@ terminology is confined to JDBC adapter internals.
 Tava 1.2 adds atomic typed `upsert`, insert-if-absent results with portable conflict
 details, database-side increments and collection mutations, concise `findOne`, and
 callback transactions for JDBC and MongoDB. Typed entities may target a runtime table or
-collection name with `tava.entity(name, RecordType.class)`.
+collection name with `tava.entityHandle(name, RecordType.class)`.
 
 SQLite connections can configure foreign keys, synchronous mode, journal mode, and busy
 timeouts through `SqliteOptions`; `Sqlite.backup(...)` creates a consistent flat-file

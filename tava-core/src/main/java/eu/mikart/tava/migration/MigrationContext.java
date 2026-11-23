@@ -1,6 +1,7 @@
 package eu.mikart.tava.migration;
 
 import eu.mikart.tava.Entity;
+import eu.mikart.tava.EntityHandle;
 import eu.mikart.tava.Records;
 import eu.mikart.tava.Tava;
 import eu.mikart.tava.schema.Schema;
@@ -63,8 +64,8 @@ public final class MigrationContext {
      * @param type record class
      * @return entity operations
      */
-    public <T extends Record> Entity<T> entity(Class<T> type) {
-        return database.entity(type);
+    public <T extends Record> EntityHandle<T> entityHandle(Class<T> type) {
+        return database.entityHandle(type);
     }
 
     /**
@@ -75,6 +76,35 @@ public final class MigrationContext {
      * @param type record class
      * @return entity operations
      */
+    public <T extends Record> EntityHandle<T> entityHandle(String name, Class<T> type) {
+        return database.entityHandle(name, type);
+    }
+
+    /**
+     * Returns the legacy typed record facade.
+     *
+     * @param <T> record type
+     * @param type record class
+     * @return typed entity facade
+     * @deprecated Use {@link #entityHandle(Class)}.
+     */
+    @Deprecated(forRemoval = true)
+    @SuppressWarnings("removal")
+    public <T extends Record> Entity<T> entity(Class<T> type) {
+        return database.entity(type);
+    }
+
+    /**
+     * Returns the legacy typed record facade.
+     *
+     * @param <T> record type
+     * @param name entity name
+     * @param type record class
+     * @return typed entity facade
+     * @deprecated Use {@link #entityHandle(String, Class)}.
+     */
+    @Deprecated(forRemoval = true)
+    @SuppressWarnings("removal")
     public <T extends Record> Entity<T> entity(String name, Class<T> type) {
         return database.entity(name, type);
     }

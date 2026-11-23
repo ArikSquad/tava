@@ -85,7 +85,7 @@ tava.nativeAccess().withNative(Connection.class, connection -> {
   </Card>
   <Card title="Poor fit">
     Code that should behave the same across all adapters. Keep that in `Schema`,
-    `Entity<T>`, `Records`, and `Query`.
+    `EntityHandle<T>`, `Records`, and `Query`.
   </Card>
 </Cards>
 
@@ -100,7 +100,7 @@ final class AccountRepository {
     }
 
     Page<Account> activeAccounts() {
-        return tava.entity(Account.class).find(Query.builder()
+        return tava.entityHandle(Account.class).find(Query.builder()
                 .where(Predicate.eq("status", "active"))
                 .sort(Sort.asc("email"))
                 .limit(100)

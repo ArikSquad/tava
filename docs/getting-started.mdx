@@ -156,7 +156,7 @@ import eu.mikart.tava.query.Predicate;
 import eu.mikart.tava.query.Query;
 import eu.mikart.tava.query.Sort;
 
-var accounts = tava.entity(Account.class);
+var accounts = tava.entityHandle(Account.class);
 
 Account saved = accounts.insert(new Account(
         UUID.randomUUID(),
