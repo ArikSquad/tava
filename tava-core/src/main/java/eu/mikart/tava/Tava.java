@@ -359,9 +359,9 @@ public final class Tava implements AutoCloseable {
      * @param type annotated record class
      * @return typed entity facade
      */
-    public <T extends Record> @NotNull Entity<T> entity(final @NotNull Class<T> type) {
+    public <T extends Record> @NotNull EntityHandle<T> entityHandle(final @NotNull Class<T> type) {
         final RecordMapper<T> mapper = RecordMapper.of(type);
-        return new Entity<>(mapper.entityName(), routedStore, mapper, executor);
+        return new EntityHandle<>(mapper.entityName(), routedStore, mapper, executor);
     }
 
     /**
@@ -373,6 +373,37 @@ public final class Tava implements AutoCloseable {
      * @param type record class
      * @return typed entity facade
      */
+    public <T extends Record> @NotNull EntityHandle<T> entityHandle(
+            final @NotNull String name, final @NotNull Class<T> type) {
+        return new EntityHandle<>(name, routedStore, RecordMapper.of(type), executor);
+    }
+
+    /**
+     * Returns the legacy typed record facade.
+     *
+     * @param <T> record type
+     * @param type record class
+     * @return typed entity facade
+     * @deprecated Use {@link #entityHandle(Class)}.
+     */
+    @Deprecated(forRemoval = true)
+    @SuppressWarnings("removal")
+    public <T extends Record> @NotNull Entity<T> entity(final @NotNull Class<T> type) {
+        final RecordMapper<T> mapper = RecordMapper.of(type);
+        return new Entity<>(mapper.entityName(), routedStore, mapper, executor);
+    }
+
+    /**
+     * Returns the legacy typed record facade.
+     *
+     * @param <T> record type
+     * @param name entity name
+     * @param type record class
+     * @return typed entity facade
+     * @deprecated Use {@link #entityHandle(String, Class)}.
+     */
+    @Deprecated(forRemoval = true)
+    @SuppressWarnings("removal")
     public <T extends Record> @NotNull Entity<T> entity(final @NotNull String name, final @NotNull Class<T> type) {
         return new Entity<>(name, routedStore, RecordMapper.of(type), executor);
     }

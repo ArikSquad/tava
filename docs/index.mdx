@@ -39,7 +39,7 @@ but they should not change what the field means in the application model.
 | --- | --- |
 | Entity model | Java records, `EntityRecord`, `Schema.builder()` |
 | Schema control | `tava.plan(schema)`, `tava.planExact(schema)`, `SchemaPlan`, `ApplyOptions` |
-| Data access | `Entity<T>`, `Records`, `Query`, `Predicate`, `Sort` |
+| Data access | `EntityHandle<T>`, `Records`, `Query`, `Predicate`, `Sort` |
 | Schema history | `SchemaHistory`, explicit up/down actions, `history.to(database, version)` |
 | Data movement | `DataTransfer.copy(...)`, resumable transfers, transforms, progress callbacks |
 | Escape hatch | `nativeAccess().withNative(...)` |
@@ -101,7 +101,7 @@ Schema schema = Schema.builder()
 try (Tava tava = Tava.open(Postgres.connect(jdbcUrl, user, password))) {
     tava.plan(schema).apply();
 
-    var accounts = tava.entity(Account.class);
+    var accounts = tava.entityHandle(Account.class);
     accounts.insert(new Account(UUID.randomUUID(), "ada@example.com", 7, null));
 
     Page<Account> page = accounts.find(Query.builder()

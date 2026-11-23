@@ -99,7 +99,7 @@ final class RecordMapper<T extends Record> {
     eu.mikart.tava.data.@NotNull Identity identity(final @NotNull Object value) {
         if (metadata.identities.size() != 1) {
             throw new TavaException.Schema(
-                    "Entity requires exactly one identity for scalar ID operations; use Identity.of(...) for composite keys");
+                    "Scalar ID operations require exactly one identity; use Identity.of(...) for composite keys");
         }
         return eu.mikart.tava.data.Identity.of(metadata.identities.getFirst().name, value);
     }

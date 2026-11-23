@@ -8,7 +8,7 @@ The entity API has two layers:
 
 | Layer | Use it when |
 | --- | --- |
-| `Entity<T>` | You have a Java record type and want typed reads and writes |
+| `EntityHandle<T>` | You have a Java record type and want typed reads and writes |
 | `Records` | You need dynamic fields, transfers, migrations, or runtime schemas |
 
 Both layers use the same query, predicate, mutation, and paging types.
@@ -16,7 +16,7 @@ Both layers use the same query, predicate, mutation, and paging types.
 ## Typed Entities
 
 ```java title="TypedEntity.java"
-var accounts = tava.entity(Account.class);
+var accounts = tava.entityHandle(Account.class);
 
 Account saved = accounts.insert(new Account(
         UUID.randomUUID(),
@@ -33,14 +33,14 @@ var page = accounts.find(Query.builder()
         .build());
 ```
 
-`Entity<T>` maps between the record type and `EntityRecord` internally. Insert calls
+`EntityHandle<T>` maps between the record type and `EntityRecord` internally. Insert calls
 return the stored record, which is useful when the backend generates fields.
 
 Pass a name separately when the same record schema is used for tenant, shard, archive,
 or version-specific storage:
 
 ```java
-Entity<Account> archived = tava.entity("accounts_2025", Account.class);
+EntityHandle<Account> archived = tava.entityHandle("accounts_2025", Account.class);
 ```
 
 The record annotations still define fields and mapping; only the target entity name is
@@ -259,8 +259,8 @@ the callback:
 
 ```java
 tava.transaction(tx -> {
-    tx.entity(Account.class).updateById(id, mutation);
-    tx.entity(AuditEvent.class).insert(event);
+    tx.entityHandle(Account.class).updateById(id, mutation);
+    tx.entityHandle(AuditEvent.class).insert(event);
     return null;
 });
 ```

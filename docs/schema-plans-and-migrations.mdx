@@ -52,7 +52,7 @@ own declaration order; versions are undone in reverse order.
         .down("Remove status", context -> removeStatusField(context)))
 ```
 
-Use `context.records(...)`, `context.entity(...)`, `context.nativeAccess()` and
+Use `context.records(...)`, `context.entityHandle(...)`, `context.nativeAccess()` and
 `context.database()` for database work. `context.apply(...)` supports safe additive
 changes, explicit rename mappings, or named risk allowances with `ApplyOptions`.
 The developer authors conversions, backfills, removals and data validation. Removing a
